@@ -3,25 +3,25 @@
 namespace App\Services\Purchasing;
 
 use App\Enums\PurchaseOrderStatus;
-use App\Models\CentralInventory;
-use App\Models\InventoryBatch;
 use App\Models\PurchaseOrderItem;
 use App\Models\TemporaryPurchaseReceipt;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 🎯 يطبّق طلبك المباشر: "رفع ملف مسودة المشتريات المستلمة... مطابقتها
- * مع الفاتورة المطلوبة، وتسجيل ما تم ترميمه وما لم يتم لاستنتاج الأصناف
- * غير المتوفرة بالسوق حالياً".
+ * 🎯 المسؤولية الوحيدة: مطابقة استلام فعلي مع فاتورة شراء، وتحديث بيانات
+ * الفاتورة نفسها (received_qty, ordered_qty, الحالة) + تفعيل "قنص نواقص
+ * السوق" عند وجود عجز — **بدون أي تأثير على أي جرد بالنظام إطلاقاً**.
  *
- * 🎓 هذا الصنف "منسّق" (Orchestrator) بنفس نمط InventoryUploadService
- * وDemandCalculationService بالضبط: يُركّب خطوات متعددة بترتيب واضح دون
- * تنفيذ التفاصيل الدقيقة لكل خطوة بنفسه — يفوّضها.
+ * ⚠️ إعادة هيكلة المشتريات (2026-08) — تغيير جوهري بقرار صريح من صاحب
+ * المشروع: "عند الاستلام فقط سوف تتأثر فواتير الشراء والمنتجات بداخلها
+ * لتتغيّر حالتها إلى (تم الاستلام)، ولكن لن تُضاف إلى جرد بالنظام — جرد
+ * النظام هو الملف الذي أرفعه أنا (المشرف) حصراً."
  *
- * ⚠️ افتراض تصميمي صريح: تُستدعى هذه الخدمة **بعد** أن أصبحت كل صفوف
- * temporary_purchase_receipts لهذه الجلسة مُطابَقة (matched_purchase_
- * order_item_id مملوءة) — عبر شاشة مطابقة يدوية ستُبنى لاحقاً، بنفس
- * نمط شاشات مطابقة المبيعات/النواقص الموجودة أصلاً بمشروعك.
+ * لذلك تمت إزالة استدعاءَي createInventoryBatch() وsyncCentralInventoryCache()
+ * القديمين بالكامل (الدالتان نفسهما حُذفتا من هذا الملف). المنطق المتبقي
+ * (increment('received_qty'), تحديث ordered_qty، MarketShortageDetectionService)
+ * يبقى تماماً كما كان — لأنه أصلاً لا يعتمد على أي جرد، فقط على الفرق
+ * الداخلي بين المطلوب والمستلم بسطر الفاتورة نفسها.
  */
 class ReceivingReconciliationService
 {
@@ -40,6 +40,9 @@ class ReceivingReconciliationService
             ->get()
             ->groupBy('matched_purchase_order_item_id');
 
+        // 🆕 new_batches يبقى صفراً دائماً الآن (لا يُنشأ أي InventoryBatch
+        // من الاستلام بعد اليوم) — أُبقيه بمخرجات الدالة لتوافق الواجهة
+        // القديمة (receiving-mapping وresponse الكونترولر) بلا كسرها.
         $stats = ['processed_items' => 0, 'total_received_qty' => 0, 'new_batches' => 0];
 
         DB::transaction(function () use ($receiptsByItem, $orderIsFinalized, $sessionId, &$stats) {
@@ -47,16 +50,11 @@ class ReceivingReconciliationService
                 $item = PurchaseOrderItem::findOrFail($itemId);
 
                 foreach ($rows as $row) {
-                    $this->createInventoryBatch($row, $item);
-                    $this->syncCentralInventoryCache($row->product_id, $row->received_qty);
-                    $stats['new_batches']++;
                     $stats['total_received_qty'] += $row->received_qty;
                 }
 
                 $item->increment('received_qty', $rows->sum('received_qty'));
 
-                // 🎯 أول مرة تُستلَم فيها هذه الفاتورة فعلياً — نُثبّت الكمية
-                // المطلوبة النهائية كـ"الكمية المُرسَلة للمورد" إن لم تكن مُثبَّتة أصلاً.
                 if ($item->ordered_qty === null) {
                     $item->update(['ordered_qty' => $item->finalQuantity()]);
                 }
@@ -74,37 +72,10 @@ class ReceivingReconciliationService
         return $stats;
     }
 
-    private function createInventoryBatch(TemporaryPurchaseReceipt $row, PurchaseOrderItem $item): void
-    {
-        InventoryBatch::create([
-            'product_id'             => $row->product_id,
-            'quantity'                => $row->received_qty,
-            'expiry_date'             => $row->expiry_date,
-            'received_at'             => now()->toDateString(),
-            'purchase_order_item_id' => $item->id,
-        ]);
-    }
-
-    /**
-     * 🎯 يُحافظ على central_inventories.quantity مُتزامناً كـ"كاش مُلخَّص"
-     * — راجع القرار التصميمي بالتقرير التعليمي الثاني (قسم inventory_batches):
-     * هذا يضمن أن خدمات Phase A الحالية (ShortageFulfillmentService،
-     * InvoiceGenerationService) تستمر بالعمل دون أي تعديل عليها إطلاقاً،
-     * لأنها تقرأ فقط من central_inventories ولا تعرف بوجود الدفعات أصلاً.
-     */
-    private function syncCentralInventoryCache(int $productId, int $addedQty): void
-    {
-        CentralInventory::where('product_id', $productId)->increment('quantity', $addedQty);
-    }
-
-    /**
-     * تحديث حالة فاتورة الشراء نفسها بناءً على نتيجة الاستلام الإجمالية:
-     * مستلمة بالكامل، أم استلام جزئي فقط.
-     */
     private function syncOrderStatus($receiptsByItem, bool $orderIsFinalized): void
     {
         if (!$orderIsFinalized) {
-            return; // لا نُغيّر حالة الفاتورة إلا عند إغلاقها فعلياً من المستخدم
+            return;
         }
 
         $itemIds = $receiptsByItem->keys();

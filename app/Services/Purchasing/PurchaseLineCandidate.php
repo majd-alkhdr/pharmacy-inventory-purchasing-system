@@ -5,19 +5,12 @@ namespace App\Services\Purchasing;
 use App\Models\Product;
 
 /**
- * 🎯 هذا الكائن هو "المدخل" الكامل لمحرك حل تعارض الميزانية (قسم 5 من
- * مستندك). يجمع كل ما يحتاجه ذلك المحرك بمكان واحد: من هو المنتج، ماذا
- * قرر محرك الاحتياج، ماذا قرر محرك السيناريوهات، وأربع إشارات أولوية
- * صريحة (بدل أن يُعيد محرك الميزانية استنتاجها بنفسه من بيانات متفرقة).
+ * 🎯 "المدخل" الكامل لمحرك حل تعارض الميزانية — راجع الشرح الأصلي المفصَّل
+ * أعلى الملف بالنسخة السابقة (لا يزال صحيحاً بالكامل).
  *
- * 🎓 لماذا "إشارات الأولوية" (isTargetItem، isCriticalShortage...) هنا
- * كخصائص جاهزة، بدل أن يحسبها BudgetAllocationService بنفسه لاحقاً؟
- * لأن مصدر كل إشارة مختلف تماماً (بعضها من product_purchase_settings،
- * بعضها من حساب الاحتياج، بعضها من market_shortage_flags) — لو تركنا
- * محرك الميزانية "يذهب ليجلبها بنفسه"، أصبح يعرف تفاصيل داخلية عن 3
- * جداول مختلفة لا علاقة له بها مباشرة (مخالفة لـ SRP). بدل ذلك، من
- * يُنشئ هذا الكائن (المنسّق الكبير لاحقاً) هو من يجمع الإشارات، ومحرك
- * الميزانية يكتفي بقراءتها كحقائق جاهزة.
+ * 🆕 isHighTurnover: إشارة أولوية رابعة أُضيفت بإعادة هيكلة المشتريات —
+ * مصدرها StockTurnoverClassifier (دوران < شهرين). راجع priorityScore()
+ * أدناه للترتيب الجديد الكامل.
  */
 final class PurchaseLineCandidate
 {
@@ -28,21 +21,28 @@ final class PurchaseLineCandidate
         public readonly bool $isTargetItem,
         public readonly bool $isCriticalShortage,
         public readonly bool $isMarketShortage,
+        public readonly bool $isHighTurnover = false,
     ) {
     }
 
     /**
-     * 🎯 يطبّق ترتيب الأولوية الحرفي من قسم 5 بمستندك:
-     * "أصناف التارجت ← النواقص الحرجة ← أصناف العروض الاستثنائية".
-     * رقم أعلى = أولوية أعلى. "قنص نواقص السوق" ليس جزءاً من هذا الترتيب
-     * إطلاقاً لأنه لا يخضع للميزانية أصلاً (يُعامَل بشكل منفصل تماماً
-     * بـ BudgetAllocationService — راجع تعليقه).
+     * 🎯 يطبّق ترتيب الأولوية النهائي المتفَق عليه صراحة مع صاحب المشروع:
+     * تارجت (4) > نقص حرج (3) > دوران عالٍ (2) > عرض نشط (1) > عادي (0).
+     *
+     * ⚠️ "عرض نشط" (1) محجوز بالترتيب لكنه ميت عملياً حالياً — لا عروض
+     * تُفعَّل بمحرك القرار الجديد (hasActiveOffer دائماً false من
+     * PriorityBasedPurchaseDecisionService) — جاهز فقط لعودة نظام العروض
+     * لاحقاً بلا حاجة لإعادة تصميم الترتيب حينها.
+     *
+     * "قنص نواقص السوق" ليس جزءاً من هذا الترتيب إطلاقاً (كما كان أصلاً)
+     * لأنه لا يخضع للميزانية أصلاً — يُعامَل بمعزل تام بـ BudgetAllocationService.
      */
     public function priorityScore(): int
     {
         return match (true) {
-            $this->isTargetItem      => 3,
-            $this->isCriticalShortage => 2,
+            $this->isTargetItem      => 4,
+            $this->isCriticalShortage => 3,
+            $this->isHighTurnover     => 2,
             $this->decision->hasActiveOffer => 1,
             default                    => 0,
         };
@@ -54,6 +54,7 @@ final class PurchaseLineCandidate
             $this->isMarketShortage         => 'قنص نواقص سوق (استثناء ميزانية)',
             $this->isTargetItem             => 'صنف تارجت',
             $this->isCriticalShortage       => 'نقص حرج (رصيد صفري)',
+            $this->isHighTurnover            => 'دوران عالٍ',
             $this->decision->hasActiveOffer => 'عرض استثنائي',
             default                          => 'عادي',
         };

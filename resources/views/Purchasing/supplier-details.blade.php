@@ -1,7 +1,7 @@
 @extends('layouts.admin')
 
 @section('page_title', $supplier->name)
-@section('page_subtitle', 'المشتريات — إدارة الأسعار والعروض')
+@section('page_subtitle', 'المشتريات — إدارة الشركات والأسعار والعروض')
 
 @push('styles')
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css">
@@ -15,6 +15,11 @@
         }
         .offer-add-row { display: none; background: var(--c-bg); }
         .offer-add-row.is-open { display: table-row; }
+        .company-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: var(--c-primary-soft); color: var(--c-primary-dark);
+            border: 1px solid #bae6fd; border-radius: 999px; padding: 4px 12px; font-size: 0.78rem; margin: 3px;
+        }
     </style>
 @endpush
 
@@ -44,9 +49,60 @@
         </div>
     </div>
 
-    {{-- ═══ إضافة مادة جديدة لهذا المورد ═══ --}}
+    {{-- 🆕 ═══ الشركات المفضّلة — أساس اختيار المورد الجديد بمحرك التوليد ═══ --}}
+    <div class="p-3 mb-4 rounded-2" style="background: var(--c-primary-soft); border: 1px solid #bae6fd;">
+        <h6 class="fw-bold text-dark mb-2 small">
+            <i class="fa-solid fa-industry text-primary me-1"></i> الشركات المصنّعة المفضّلة لهذا المورد
+        </h6>
+        <p class="text-muted small mb-3" style="font-size: 0.78rem;">
+            هذه القائمة هي أساس اختيار المورد تلقائياً عند توليد فواتير الشراء — أي منتج تنتمي شركته المصنّعة لإحدى
+            هذه القائمة، يُقترَح هذا المورد له تلقائياً. لو أكثر من مورد يشارك نفس الشركة، سيُطلَب اختيار يدوي وقت
+            التوليد لتلك الدفعة فقط.
+        </p>
+
+        <div class="mb-3">
+            @forelse ($supplier->preferredCompanies as $company)
+                <span class="company-chip">
+                    <span>{{ $company->company_name }}</span>
+                    <form action="{{ route('purchasing.suppliers.companies.destroy', [$supplier->id, $company->id]) }}" method="POST" class="d-inline">
+                        @csrf @method('DELETE')
+                        <button type="submit" class="btn btn-link btn-sm text-danger p-0" style="font-size: 0.72rem;" onclick="return confirm('حذف هذه الشركة من قائمة المفضّلات؟')">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </form>
+                </span>
+            @empty
+                <span class="text-muted small">لا توجد شركات مفضّلة مضافة بعد — أضف واحدة أدناه.</span>
+            @endforelse
+        </div>
+
+        <form action="{{ route('purchasing.suppliers.companies.store', $supplier->id) }}" method="POST" class="row g-2 align-items-end">
+            @csrf
+            <div class="col-md-9">
+                <select name="company_name" id="companySelect" class="form-select form-select-sm @error('company_name') is-invalid @enderror" required></select>
+                @error('company_name') <div class="invalid-feedback d-block">{{ $message }}</div> @enderror
+            </div>
+            <div class="col-md-3">
+                <button type="submit" class="btn btn-brand btn-sm w-100 rounded-2"><i class="fa-solid fa-plus me-1"></i> إضافة شركة</button>
+            </div>
+        </form>
+    </div>
+
+    {{-- الحقل القديم (محسوبة حياً من supplier_products — معلوماتية بحتة الآن) --}}
+    @php($companies = $supplier->distributedCompanies())
+    @if (!empty($companies))
+        <div class="mb-4">
+            <span class="text-muted small d-block mb-1">📌 (قديم/معلوماتي) شركات محسوبة حياً من مواد مرتبطة أصلاً بجدول الأسعار القديم — لا تُستخدم بمنطق الاختيار الفعلي بعد اليوم:</span>
+            @foreach ($companies as $company)
+                <span class="badge badge-soft-primary px-2 py-1 me-1">{{ $company }}</span>
+            @endforeach
+        </div>
+    @endif
+
+    {{-- ═══ إضافة مادة جديدة لهذا المورد (يبقى كما هو — تمهيداً لعودة الأسعار) ═══ --}}
     <div class="p-3 mb-4 rounded-2" style="background: var(--c-bg); border: 1px solid var(--c-border);">
-        <h6 class="fw-bold text-dark mb-2 small"><i class="fa-solid fa-plus-circle text-primary me-1"></i> ربط مادة جديدة بهذا المورد</h6>
+        <h6 class="fw-bold text-dark mb-2 small"><i class="fa-solid fa-plus-circle text-primary me-1"></i> ربط مادة جديدة بهذا المورد (اختياري حالياً — بلا استخدام فعلي بالتوليد)</h6>
+        <p class="text-muted small mb-2" style="font-size: 0.72rem;">💡 شركة المادة المصنّعة تُؤخَذ تلقائياً من بطاقة المادة نفسها فور اختيارها أدناه — لا حاجة لإدخالها هنا مجدداً.</p>
         <form action="{{ route('purchasing.suppliers.products.store', $supplier->id) }}" method="POST" class="row g-2 align-items-end">
             @csrf
             <div class="col-md-6">
@@ -71,16 +127,16 @@
         </form>
     </div>
 
-    {{-- ═══ جدول المواد المرتبطة + العروض ═══ --}}
+    {{-- ═══ جدول المواد المرتبطة + العروض (يبقى كما هو بلا حذف) ═══ --}}
     <div class="border rounded-2 overflow-hidden shadow-sm bg-white">
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0 small">
                 <thead>
                     <tr>
-                        <th style="width: 30%">المادة</th>
-                        <th class="text-center" style="width: 12%">سعر الوحدة</th>
-                        <th class="text-center" style="width: 8%">مفضّل</th>
-                        <th style="width: 35%">العروض النشطة</th>
+                        <th style="width: 28%">المادة</th>
+                        <th class="text-center" style="width: 10%">سعر الوحدة</th>
+                        <th class="text-center" style="width: 7%">مفضّل</th>
+                        <th style="width: 40%">العروض النشطة (بونص + خصم)</th>
                         <th class="text-center" style="width: 15%">الإجراءات</th>
                     </tr>
                 </thead>
@@ -102,7 +158,7 @@
                             <td>
                                 @forelse ($sp->offers as $offer)
                                     <span class="offer-chip">
-                                        <span>من {{ $offer->min_quantity }}+: {{ $offer->bonus_type->label() }} ({{ $offer->bonus_value }})</span>
+                                        <span>من {{ $offer->min_quantity }}+: {{ $offer->label() }}</span>
                                         <form action="{{ route('purchasing.supplier-products.offers.destroy', [$sp->id, $offer->id]) }}" method="POST" class="d-inline">
                                             @csrf @method('DELETE')
                                             <button type="submit" class="btn btn-link btn-sm text-danger p-0" style="font-size: 0.7rem;" onclick="return confirm('حذف هذا العرض؟')">
@@ -135,15 +191,12 @@
                                         <input type="number" name="min_quantity" min="1" class="form-control form-control-sm" required>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label small text-secondary mb-1">نوع العرض</label>
-                                        <select name="bonus_type" class="form-select form-select-sm" required>
-                                            <option value="free_quantity">كمية مجانية</option>
-                                            <option value="percent_discount">نسبة خصم %</option>
-                                        </select>
+                                        <label class="form-label small text-secondary mb-1">بونص (كمية مجانية)</label>
+                                        <input type="number" name="bonus_quantity" min="0" class="form-control form-control-sm" placeholder="0">
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label small text-secondary mb-1">القيمة</label>
-                                        <input type="number" step="0.01" min="0" name="bonus_value" class="form-control form-control-sm" required>
+                                        <label class="form-label small text-secondary mb-1">نسبة خصم %</label>
+                                        <input type="number" step="0.01" min="0" max="100" name="discount_percent" class="form-control form-control-sm" placeholder="0">
                                     </div>
                                     <div class="col-md-2">
                                         <label class="form-label small text-secondary mb-1">من تاريخ</label>
@@ -156,6 +209,7 @@
                                     <div class="col-md-2">
                                         <button type="submit" class="btn btn-brand btn-sm w-100 rounded-2">إضافة العرض</button>
                                     </div>
+                                    <div class="col-12 form-text small">يمكن ملء الحقلين معاً (بونص + خصم بنفس العرض)، أو أحدهما فقط — يجب توفر أحدهما على الأقل.</div>
                                 </form>
                             </td>
                         </tr>
@@ -184,6 +238,26 @@
             processResults: data => data,
         },
         language: { inputTooShort: () => 'اكتب حرفاً للبحث...' },
+    });
+
+    {{-- 🆕 select2 حر (Tags) لاسم الشركة — يسمح بكتابة اسم جديد مباشرة
+         بدل اختيار من قائمة، لأن "الشركة" هنا نص حر يطابق products.company --}}
+    $('#companySelect').select2({
+        placeholder: 'اكتب اسم الشركة المصنّعة...',
+        tags: true,
+        allowClear: true,
+        minimumInputLength: 1,
+        ajax: {
+            url: '{{ route('api.products.search') }}',
+            dataType: 'json',
+            delay: 300,
+            data: params => ({ q: params.term }),
+            processResults: data => ({
+                results: [...new Set(data.results.map(r => r.text.match(/\(([^)]+)\)$/)?.[1]).filter(Boolean))]
+                    .map(company => ({ id: company, text: company }))
+            }),
+        },
+        language: { inputTooShort: () => 'اكتب حرفاً للبحث عن شركة موجودة، أو اكتب اسماً جديداً بالكامل...' },
     });
 
     function toggleOfferForm(spId) {

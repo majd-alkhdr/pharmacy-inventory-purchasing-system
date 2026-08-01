@@ -39,9 +39,11 @@ class SupplierProduct extends Model
     }
 
     /**
-     * 🎯 يستخدمها محرك السيناريوهات لاحقاً: أرخص عرض سارٍ حالياً لهذا
-     * الرابط مورد+مادة، مع مراعاة الكمية المطلوبة (بعض العروض تحتاج حداً
-     * أدنى من الكمية لتفعيلها).
+     * 🎯 أفضل عرض سارٍ حالياً لهذا الرابط عند كمية معيّنة. "الأفضل" هنا
+     * يعني أعلى شريحة (min_quantity) تنطبق على الكمية المطلوبة — شريحة
+     * أعلى تعني عادة فائدة أكبر (بونص و/أو خصم أكبر)، بافتراض أن الموردين
+     * يُصمّمون عروضهم تصاعدياً. لو أردت لاحقاً مقارنة كل الشرائح المؤهَّلة
+     * فعلياً بالتكلفة الصافية بدل الافتراض، استخدم offers()->active() مباشرة.
      */
     public function bestActiveOfferFor(int $quantity): ?SupplierOffer
     {
@@ -49,7 +51,7 @@ class SupplierProduct extends Model
             ->where('min_quantity', '<=', $quantity)
             ->where(fn (Builder $q) => $q->whereNull('starts_at')->orWhereDate('starts_at', '<=', now()))
             ->where(fn (Builder $q) => $q->whereNull('ends_at')->orWhereDate('ends_at', '>=', now()))
-            ->orderByDesc('min_quantity') // أعلى شريحة تنطبق على الكمية المطلوبة
+            ->orderByDesc('min_quantity')
             ->first();
     }
 }

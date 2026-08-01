@@ -5,16 +5,23 @@ namespace App\Services\Inventory;
 use App\Models\CentralInventory;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
-use App\Models\Shortage;
 use App\Models\TemporarySale;
 use Illuminate\Support\Facades\DB;
 
 /**
  * 🎯 المسؤولية الوحيدة: تحويل صفوف temporary_sales المُطابَقة (بعد ما صار
  * عندها pharmacy_id و product_id) إلى فواتير حقيقية + سجلات نواقص للعجز.
+ *
+ * 🎯 تسجيل النواقص نفسها (مع الدمج بدل التكرار) مفوَّض بالكامل لـ
+ * ShortageRecorderService — هذا الصنف لا "يعرف" كيف يُدمَج النقص، فقط
+ * "متى" يجب تسجيله (بعد اكتشاف عجز بالكمية).
  */
 class InvoiceGenerationService
 {
+    public function __construct(
+        private readonly ShortageRecorderService $shortageRecorder,
+    ) {}
+
     public function generateInvoicesFromTemp(string $sessionId): array
     {
         $aggregatedSales = TemporarySale::forSession($sessionId)
@@ -35,7 +42,7 @@ class InvoiceGenerationService
 
             $stockUpdates  = [];
             $invoiceItems  = [];
-            $newShortages  = [];
+            $newShortages  = collect(); // 🎯 Collection بدل array — تُمرَّر مباشرة لـ ShortageRecorderService
 
             foreach ($aggregatedSales as $pharmacyId => $items) {
                 $invoice = Invoice::create([
@@ -63,14 +70,12 @@ class InvoiceGenerationService
                     ];
 
                     if ($shortageQty > 0) {
-                        $newShortages[] = [
+                        $newShortages->push([
                             'pharmacy_id' => $pharmacyId,
                             'product_id'  => $productId,
                             'quantity'    => $shortageQty,
-                            'status'      => 'pending',
-                            'created_at'  => now(),
-                            'updated_at'  => now(),
-                        ];
+                            'occurred_at' => now(),
+                        ]);
                     }
                 }
             }
@@ -78,11 +83,11 @@ class InvoiceGenerationService
             foreach (array_chunk($invoiceItems, 500) as $chunk) {
                 InvoiceItem::insert($chunk);
             }
-            if (!empty($newShortages)) {
-                foreach (array_chunk($newShortages, 500) as $chunk) {
-                    Shortage::insert($chunk);
-                }
-            }
+
+            // 🎯 التعديل الجوهري: بدل Shortage::insert() الخام (كان يُنشئ
+            // صفاً جديداً كل يوم حتى لو موجود نقص معلّق أصلاً لنفس المادة)،
+            // نستدعي الخدمة التي تدمج مع أي نقص pending موجود مسبقاً.
+            $this->shortageRecorder->recordMany($newShortages);
 
             foreach ($stockUpdates as $productId => $newQty) {
                 CentralInventory::where('product_id', $productId)->update(['quantity' => max(0, $newQty)]);

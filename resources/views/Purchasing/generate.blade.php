@@ -1,36 +1,7 @@
 @extends('layouts.admin')
 
 @section('page_title', 'توليد فواتير شراء مقترحة')
-@section('page_subtitle', 'المشتريات — محرك التنبؤ')
-
-@push('styles')
-<style>
-    .scenario-choice {
-        border: 2px solid var(--c-border);
-        border-radius: 10px;
-        padding: 16px;
-        cursor: pointer;
-        transition: all .15s ease;
-        height: 100%;
-    }
-    .scenario-choice:hover {
-        border-color: var(--c-primary);
-        background-color: var(--c-primary-soft);
-    }
-    .scenario-choice.is-selected {
-        border-color: var(--c-primary);
-        background-color: var(--c-primary-soft);
-        box-shadow: 0 0 0 .15rem rgba(2, 132, 199, .12);
-    }
-    .scenario-choice input[type="radio"] { display: none; }
-    .scenario-icon-badge {
-        width: 34px; height: 34px; border-radius: 8px;
-        display: flex; align-items: center; justify-content: center;
-        background: var(--c-primary-soft); color: var(--c-primary);
-        margin-bottom: 8px;
-    }
-</style>
-@endpush
+@section('page_subtitle', 'المشتريات — محرك التنبؤ حسب الأولوية والدوران')
 
 @section('content')
 <div class="surface-card p-4 shadow-sm" style="max-width: 820px; margin: 0 auto;">
@@ -38,10 +9,19 @@
     <div class="mb-4">
         <h5 class="fw-bold text-dark mb-1"><i class="fa-solid fa-wand-magic-sparkles text-primary me-1"></i> توليد فواتير شراء مقترحة تلقائياً</h5>
         <p class="text-muted small mb-0">
-            سيقوم النظام بفحص كل المواد المؤهَّلة (باستثناء الراكدة)، حساب احتياج كل واحدة، واقتراح
-            أفضل مورد وكمية حسب السيناريو المختار — مع شرح مبسّط لسبب كل اقتراح.
+            سيقوم النظام بفحص كل المواد المؤهَّلة (باستثناء الراكدة ودوراناً بطيء الحركة)، حساب احتياج كل واحدة، واقتراح
+            أفضل مورد حسب الشركة المفضّلة — وفق ترتيب الأولوية: تارجت ← نقص حرج ← دوران عالٍ ← عادي.
         </p>
     </div>
+
+    @if ($lockedSupplierIds->isNotEmpty())
+        <div class="alert alert-warning small mb-4">
+            <i class="fa-solid fa-lock me-1"></i>
+            الموردون التالون لديهم مسودة معلّقة بانتظار قرارك (اعتماد أو رفض)، ولن يُولَّد لهم أي فاتورة جديدة حتى يُبتّ بأمرها:
+            <strong>{{ $suppliers->whereIn('id', $lockedSupplierIds)->pluck('name')->implode('، ') }}</strong>.
+            راجع <a href="{{ route('purchasing.orders.index', ['status' => 'draft']) }}" class="fw-bold">المسودات المعلّقة</a> أولاً.
+        </div>
+    @endif
 
     <form action="{{ route('purchasing.orders.store') }}" method="POST">
         @csrf
@@ -58,38 +38,18 @@
             <div class="form-text small">مثال: 90 يوماً = يغطي النظام احتياج 3 أشهر قادمة تقريباً.</div>
         </div>
 
-        {{-- اختيار السيناريو --}}
-        <div class="mb-4">
-            <label class="form-label fw-bold text-dark small d-block mb-2">سيناريو التوليد</label>
-            <div class="row g-2">
-                @foreach ($scenarios as $index => $scenario)
-                    <div class="col-md-4">
-                        <label class="scenario-choice d-block {{ old('scenario', 'balanced') === $scenario->value ? 'is-selected' : '' }}">
-                            <input type="radio" name="scenario" value="{{ $scenario->value }}"
-                                {{ old('scenario', 'balanced') === $scenario->value ? 'checked' : '' }}
-                                onchange="document.querySelectorAll('.scenario-choice').forEach(el => el.classList.remove('is-selected')); this.closest('.scenario-choice').classList.add('is-selected');">
-                            <div class="scenario-icon-badge">
-                                <i class="fa-solid {{ ['fa-bolt', 'fa-chart-line', 'fa-scale-balanced'][$index] ?? 'fa-circle' }}"></i>
-                            </div>
-                            <div class="fw-bold text-dark small mb-1">{{ $scenario->label() }}</div>
-                            <div class="text-muted" style="font-size: 0.75rem; line-height: 1.4;">{{ $scenario->description() }}</div>
-                        </label>
-                    </div>
-                @endforeach
-            </div>
-            @error('scenario')
-                <div class="text-danger small mt-1">{{ $message }}</div>
-            @enderror
-        </div>
+        {{-- 🆕 لا يوجد اختيار سيناريو بعد الآن — سيناريو الأولوية الواحد
+             يُطبَّق دائماً تلقائياً (تارجت ← نقص حرج ← دوران عالٍ ← عادي). --}}
 
         <div class="row g-3 mb-4">
-            {{-- نطاق التوليد: مورد محدد أو الكل --}}
             <div class="col-md-6">
                 <label class="form-label fw-bold text-dark small">نطاق التوليد</label>
                 <select name="supplier_id" class="form-select @error('supplier_id') is-invalid @enderror">
-                    <option value="">كل الموردين معاً</option>
+                    <option value="">كل الموردين معاً (سيُتخطّى المقفولون تلقائياً)</option>
                     @foreach ($suppliers as $supplier)
-                        <option value="{{ $supplier->id }}" @selected(old('supplier_id') == $supplier->id)>{{ $supplier->name }}</option>
+                        <option value="{{ $supplier->id }}" @selected(old('supplier_id') == $supplier->id) {{ $lockedSupplierIds->contains($supplier->id) ? 'disabled' : '' }}>
+                            {{ $supplier->name }} {{ $lockedSupplierIds->contains($supplier->id) ? '— 🔒 لديه مسودة معلّقة' : '' }}
+                        </option>
                     @endforeach
                 </select>
                 @error('supplier_id')
@@ -97,7 +57,6 @@
                 @enderror
             </div>
 
-            {{-- تجاوز يدوي للميزانية --}}
             <div class="col-md-6">
                 <label class="form-label fw-bold text-dark small">سقف ميزانية يدوي (اختياري)</label>
                 <input type="number" step="0.01" min="0" name="manual_budget_override"

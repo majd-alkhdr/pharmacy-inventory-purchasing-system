@@ -6,10 +6,13 @@ use App\Http\Controllers\Purchasing\PurchaseOrderController;
 use App\Http\Controllers\Purchasing\SupplierController;
 use App\Http\Controllers\Purchasing\SupplierOfferController;
 use App\Http\Controllers\Purchasing\SupplierProductController;
+use App\Http\Controllers\Purchasing\SupplierCompanyController;
 use App\Http\Controllers\Purchasing\BudgetSettingController;
 use App\Http\Controllers\Purchasing\CostVarianceController;
 use App\Http\Controllers\Purchasing\HistoricalPurchaseImportController;
 use App\Http\Controllers\Purchasing\ReceivingController;
+use App\Http\Controllers\Purchasing\PurchaseInventoryController;
+use App\Http\Controllers\Purchasing\CategoryController;
 
 
 Route::redirect('/', '/upload-sales');
@@ -38,12 +41,8 @@ Route::get('/invoices/export-all', [InventoryController::class, 'exportAllInvoic
 Route::get('/api/products-search', [InventoryController::class, 'searchProducts'])->name('api.products.search');
 Route::get('/api/pharmacies-search', [InventoryController::class, 'searchPharmacies'])->name('api.pharmacies.search');
 
-// جدول النواقص الكامل
-// ✅ الترتيب الصحيح
-// أولاً: الروابط المحددة (بدون wildcard)
 Route::get('/shortages/export', [InventoryController::class, 'exportShortages'])->name('inventory.shortages.export');
 Route::get('/shortages/upload-form', [InventoryController::class, 'showShortagesImportForm'])->name('inventory.shortages.upload.form');
-// ✅ أضف هذا الرابط لحماية النظام من الـ Refresh عند صفحة المطابقة
 Route::get('/shortages/import', function () {
     return redirect()->route('inventory.shortages.upload.form')
         ->with('warning', '⚠️ تنبيه: انتهت جلسة المطابقة، يرجى إعادة رفع الملف إذا لم يتم الحفظ.');
@@ -51,33 +50,30 @@ Route::get('/shortages/import', function () {
 Route::post('/shortages/import', [InventoryController::class, 'importShortages'])->name('inventory.shortages.import');
 Route::post('/shortages/save-mapping', [InventoryController::class, 'saveShortagesMapping'])->name('inventory.shortages.save-mapping');
 
-// ثانياً: الروابط التي تحتوي على {id} (wildcard) — دائماً في الأخير
 Route::post('/shortages/{id}/resolve', [InventoryController::class, 'resolveShortage'])->name('inventory.shortages.resolve');
 Route::post('/shortages/{id}/note', [InventoryController::class, 'updateShortageNote'])->name('inventory.shortages.note');
 
 
 Route::prefix('inventory')->name('inventory.')->group(function () {
-    // Polling موحّد
     Route::get('import-status/{sessionId}', [InventoryController::class, 'importStatus'])
         ->name('import.status');
-    // شاشة المواد الجديدة بالجرد
     Route::get('pending-inventory/{sessionId}', [InventoryController::class, 'showPendingInventory'])
         ->name('pending-inventory.show');
-    // شاشة مطابقة المبيعات
     Route::get('mapping/{sessionId}', [InventoryController::class, 'showMapping'])
         ->name('mapping.show');
-    // شاشة مطابقة النواقص
     Route::get('shortages/mapping/{sessionId}', [InventoryController::class, 'showShortagesMapping'])
         ->name('shortages.mapping.show');
-    // باقي الـ Routes الموجودة أصلاً (upload, stock.upload, shortages.import...) تبقى كما هي
-    });
+});
 
-    
+
 Route::prefix('purchasing')->name('purchasing.')->group(function () {
 
     // ══ فواتير الشراء المقترحة ══
     Route::get('generate', [PurchaseOrderController::class, 'create'])->name('orders.create');
     Route::post('generate', [PurchaseOrderController::class, 'store'])->name('orders.store');
+    // 🆕 شاشة حل تعارض الموردين (أكثر من مورد يفضّل نفس الشركة)
+    Route::get('generate/resolve-conflicts', [PurchaseOrderController::class, 'showResolveConflicts'])->name('orders.resolve-conflicts');
+    Route::post('generate/resolve-conflicts', [PurchaseOrderController::class, 'resolveConflicts'])->name('orders.resolve-conflicts.save');
     Route::get('orders', [PurchaseOrderController::class, 'index'])->name('orders.index');
     Route::get('orders/{purchaseOrder}', [PurchaseOrderController::class, 'show'])->name('orders.show');
     Route::post('orders/{purchaseOrder}/approve', [PurchaseOrderController::class, 'approve'])->name('orders.approve');
@@ -90,28 +86,52 @@ Route::prefix('purchasing')->name('purchasing.')->group(function () {
     Route::get('suppliers/{supplier}/edit', [SupplierController::class, 'edit'])->name('suppliers.edit');
     Route::put('suppliers/{supplier}', [SupplierController::class, 'update'])->name('suppliers.update');
 
-    // ══ ربط مادة بمورد (سعر) ══
+    // 🆕 ══ الشركات المفضّلة لكل مورد — أساس اختيار المورد الجديد ══
+    Route::post('suppliers/{supplier}/companies', [SupplierCompanyController::class, 'store'])->name('suppliers.companies.store');
+    Route::delete('suppliers/{supplier}/companies/{supplierCompany}', [SupplierCompanyController::class, 'destroy'])->name('suppliers.companies.destroy');
+
+    // ══ ربط مادة بمورد (سعر) — يبقى بلا حذف، تمهيداً لعودة الأسعار لاحقاً ══
     Route::post('suppliers/{supplier}/products', [SupplierProductController::class, 'store'])->name('suppliers.products.store');
     Route::delete('suppliers/{supplier}/products/{supplierProduct}', [SupplierProductController::class, 'destroy'])->name('suppliers.products.destroy');
 
-    // ══ عروض/بونص لكل رابطة مورد-مادة ══
+    // ══ عروض/بونص لكل رابطة مورد-مادة — يبقى بلا حذف ══
     Route::post('supplier-products/{supplierProduct}/offers', [SupplierOfferController::class, 'store'])->name('supplier-products.offers.store');
     Route::delete('supplier-products/{supplierProduct}/offers/{offer}', [SupplierOfferController::class, 'destroy'])->name('supplier-products.offers.destroy');
 
-    // ══ إعدادات الميزانية الشهرية ("إعدادات النظام") ══
+    // ══ إعدادات الميزانية الشهرية ══
     Route::get('budget-settings', [BudgetSettingController::class, 'index'])->name('budget-settings.index');
     Route::post('budget-settings', [BudgetSettingController::class, 'update'])->name('budget-settings.update');
 
-    // ══ الاستلام الفعلي (قنص نواقص السوق) ══
+    // ══ الاستلام الفعلي (قنص نواقص السوق) — لا يؤثر على أي جرد بعد اليوم ══
     Route::get('receiving', [ReceivingController::class, 'showUploadForm'])->name('receiving.form');
     Route::post('receiving', [ReceivingController::class, 'upload'])->name('receiving.upload');
     Route::get('receiving/mapping/{sessionId}', [ReceivingController::class, 'showMapping'])->name('receiving.mapping');
     Route::post('receiving/finalize', [ReceivingController::class, 'finalize'])->name('receiving.finalize');
 
-    // ══ استيراد تاريخي لأسعار الموردين ══
+    // ══ استيراد تاريخي لأسعار الموردين — يبقى بلا حذف ══
     Route::get('historical-import', [HistoricalPurchaseImportController::class, 'showForm'])->name('historical-import.form');
     Route::post('historical-import', [HistoricalPurchaseImportController::class, 'upload'])->name('historical-import.upload');
 
     // ══ مراقب تذبذب التكلفة ══
     Route::get('cost-variance', [CostVarianceController::class, 'index'])->name('cost-variance.index');
+
+    // ══ إلغاء/رفض فواتير الشراء ══
+    Route::post('orders/{purchaseOrder}/reject', [PurchaseOrderController::class, 'reject'])->name('orders.reject');
+    Route::post('orders/{purchaseOrder}/cancel', [PurchaseOrderController::class, 'cancel'])->name('orders.cancel');
+    Route::post('orders/{purchaseOrder}/cancel-remaining', [PurchaseOrderController::class, 'cancelRemaining'])->name('orders.cancel-remaining');
+
+    // 🆕 ══ جرد المشتريات الموحّد — يستبدل شاشة "أسعار البيع الرسمية" ══
+    Route::get('purchase-inventory', [PurchaseInventoryController::class, 'showUploadForm'])->name('purchase-inventory.form');
+    Route::post('purchase-inventory', [PurchaseInventoryController::class, 'upload'])->name('purchase-inventory.upload');
+
+    // ⚠️ مسارات "أسعار البيع الرسمية" القديمة أُزيلت من هنا بالكامل —
+    // الكونترولر والـ Views تبقى بالكود بلا حذف (بقرار صريح: التنظيف لاحقاً)
+    // لكن لا وصول فعلياً إليها من الواجهة بعد الآن.
+
+   // ══ التصنيفات/الاستطباب — بلا أي تعديل، كما هي تماماً ══
+   Route::get('categories', [CategoryController::class, 'showForm'])->name('categories.form');
+   Route::post('categories/upload-master', [CategoryController::class, 'uploadMasterList'])->name('categories.upload-master');
+   Route::post('categories/upload-links', [CategoryController::class, 'uploadLinks'])->name('categories.upload-links');
+   Route::get('categories/mapping/{sessionId}', [CategoryController::class, 'showMapping'])->name('categories.mapping');
+   Route::post('categories/save-mapping', [CategoryController::class, 'saveMapping'])->name('categories.save-mapping');
 });

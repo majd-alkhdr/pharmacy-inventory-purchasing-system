@@ -2,76 +2,63 @@
 
 namespace App\Services\Purchasing;
 
-use App\Enums\PurchaseOrderStatus;
-use App\Models\SupplierProduct;
+use App\Models\ProductPurchasePrice;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 🎯 يطبّق قسم 7 من مستندك: *"مراقبة آلية لتغيرات أسعار الموردين أو
- * إلغاء العروض. إظهار تنبيهات مرئية للمشرف في حال ارتفعت التكلفة الصافية
- * لأي مادة عن آخر توريد لها."*
+ * 🎯 يطبّق نفس هدف النسخة السابقة (تنبيه بصري عند ارتفاع تكلفة مادة عن
+ * آخر توريد لها)، لكن بمصدر بيانات مختلف تماماً بعد إعادة هيكلة المشتريات:
  *
- * 🩹 قرار أداء مُتعمَّد (بعد درس إصلاح مشكلة الـ Timeout مباشرة):
- * بدل حلقة `foreach ($supplierProducts as $sp) { Query::latestFor($sp) }`
- * (استعلام منفصل لكل رابطة مورد-مادة — N+1 كلاسيكي)، نجلب "آخر تكلفة
- * فعلية مدفوعة لكل رابطة" **باستعلام SQL واحد فقط** عبر subquery يحدّد
- * أعلى ID (= الأحدث) لكل supplier_product_id ضمن الفواتير المُستلَمة.
+ * ⚠️ التغيير الجوهري: النسخة القديمة كانت تقارن purchase_order_items.unit_cost
+ * (المرتبط باستلام فعلي فعلي) — لكن بعد قرار "لا أسعار على مستوى السطر
+ * بعد الآن" (unitCost = 0 دائماً بمحرك القرار الجديد)، هذا المصدر لم يعد
+ * يحمل أي قيمة مفيدة. المصدر الجديد الموافَق عليه صراحة من صاحب المشروع:
+ * "آخر سعر شراء" الذي يُضاف الآن كعمود بملف جرد المشتريات نفسه، ويُخزَّن
+ * تاريخياً بجدول product_purchase_prices (راجع مايجريشن 2026_08_01_000003).
  *
- * لا حاجة لجدول "تاريخ أسعار" منفصل (Cost History) — البيانات موجودة
- * أصلاً بـ purchase_order_items، والاستعلام أدناه يستخرجها مباشرة.
+ * الاستعلام أصبح أبسط بكثير من النسخة القديمة (كانت تحتاج subquery معقّد
+ * عبر purchase_order_items+purchase_orders) لأن المصدر أصبح مباشراً.
  */
 class CostVarianceMonitorService
 {
     /**
-     * @return Collection<int, object{supplier_product: SupplierProduct, last_paid_cost: float, current_cost: float, variance_amount: float, variance_percent: float}>
+     * @return Collection<int, object{product: \App\Models\Product, previous_price: float, current_price: float, variance_amount: float, variance_percent: float}>
      */
     public function detectVariances(): Collection
     {
-        $lastPaidCosts = $this->fetchLastPaidCosts();
+        // 🎯 كل منتج له سطران على الأقل بجدول أسعار الشراء التاريخي —
+        // استعلام واحد يجلب أحدث سعرين لكل منتج معاً (بدل حلقة N+1).
+        $productIds = ProductPurchasePrice::query()
+            ->select('product_id')
+            ->groupBy('product_id')
+            ->havingRaw('COUNT(*) >= 2')
+            ->pluck('product_id');
 
-        if ($lastPaidCosts->isEmpty()) {
+        if ($productIds->isEmpty()) {
             return collect();
         }
 
-        return SupplierProduct::with(['product', 'supplier'])
-            ->whereIn('id', $lastPaidCosts->keys())
-            ->get()
-            ->map(function (SupplierProduct $sp) use ($lastPaidCosts) {
-                $lastPaid = (float) $lastPaidCosts[$sp->id];
-                $current  = (float) $sp->unit_cost;
+        return $productIds->map(function (int $productId) {
+            $current = ProductPurchasePrice::latestFor($productId);
+            $previous = ProductPurchasePrice::previousFor($productId);
 
-                return (object) [
-                    'supplier_product' => $sp,
-                    'last_paid_cost'     => $lastPaid,
-                    'current_cost'        => $current,
-                    'variance_amount'    => round($current - $lastPaid, 2),
-                    'variance_percent'   => $lastPaid > 0 ? round((($current - $lastPaid) / $lastPaid) * 100, 1) : 0.0,
-                ];
-            })
-            // 🎯 نُظهر فقط الارتفاع (تآكل هامش الربح) — انخفاض السعر خبر جيد، لا يحتاج تنبيهاً
-            ->filter(fn ($row) => $row->current_cost > $row->last_paid_cost)
-            ->sortByDesc('variance_percent')
-            ->values();
-    }
+            if ($current === null || $previous === null || $current <= $previous) {
+                return null; // 🎯 نُظهر فقط الارتفاع — انخفاض السعر خبر جيد، لا يحتاج تنبيهاً
+            }
 
-    /**
-     * استعلام واحد فقط: [supplier_product_id => آخر سعر فعلي مدفوع]
-     */
-    private function fetchLastPaidCosts(): Collection
-    {
-        $latestItemIds = DB::table('purchase_order_items as poi2')
-            ->join('purchase_orders as po2', 'po2.id', '=', 'poi2.purchase_order_id')
-            ->whereIn('po2.status', [
-                PurchaseOrderStatus::Received->value,
-                PurchaseOrderStatus::PartiallyReceived->value,
-            ])
-            ->whereNotNull('poi2.supplier_product_id')
-            ->groupBy('poi2.supplier_product_id')
-            ->selectRaw('MAX(poi2.id) as max_id');
+            $product = \App\Models\Product::find($productId);
 
-        return DB::table('purchase_order_items as poi')
-            ->joinSub($latestItemIds, 'latest', fn ($join) => $join->on('latest.max_id', '=', 'poi.id'))
-            ->pluck('poi.unit_cost', 'poi.supplier_product_id');
+            return (object) [
+                'product'          => $product,
+                'previous_price'   => $previous,
+                'current_price'     => $current,
+                'variance_amount'  => round($current - $previous, 2),
+                'variance_percent' => round((($current - $previous) / $previous) * 100, 1),
+            ];
+        })
+        ->filter()
+        ->sortByDesc('variance_percent')
+        ->values();
     }
 }

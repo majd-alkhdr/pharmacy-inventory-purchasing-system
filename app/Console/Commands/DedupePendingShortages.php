@@ -4,6 +4,7 @@
 namespace App\Console\Commands;
 
 use App\Models\Shortage;
+use App\Services\Inventory\ShortageRecorderService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -16,11 +17,20 @@ class DedupePendingShortages extends Command
 
     protected $description = 'دمج صفوف النواقص المعلقة (pending) المكررة لنفس الصيدلية والمادة في صف واحد، مع جمع الكميات وأخذ أحدث تاريخ';
 
-    public function handle(): int
+    /**
+     * 🎯 بعد إعادة الهيكلة: هذا الأمر لم يعد "يحسب الدمج بنفسه" — فقط
+     * يكتشف التكرار الموجود فعلياً بقاعدة البيانات (من قبل إصلاح مشكلة
+     * التكرار عند المصدر)، ثم يُفوّض عملية الدمج الفعلية بالكامل لنفس
+     * الخدمة المستخدمة بالرفع اليومي والاستيراد التاريخي.
+     *
+     * لماذا هذا أفضل؟ لأنه يضمن **اتساقاً تاماً** بين "كيف يُدمَج نقص
+     * جديد اليوم" و"كيف نُصحّح تكراراً قديماً حصل قبل الإصلاح" — نفس
+     * القاعدة بالضبط، بلا احتمال أن ينحرف أحد المكانين عن الآخر مستقبلاً.
+     */
+    public function handle(ShortageRecorderService $shortageRecorder): int
     {
         $dryRun = $this->option('dry-run');
 
-        // إيجاد كل تركيبة (صيدلية + مادة) لها أكثر من صف pending واحد
         $duplicates = Shortage::where('status', 'pending')
             ->select('pharmacy_id', 'product_id')
             ->groupBy('pharmacy_id', 'product_id')
@@ -38,7 +48,7 @@ class DedupePendingShortages extends Command
         $deletedRows  = 0;
 
         foreach ($duplicates as $dup) {
-            DB::transaction(function () use ($dup, $dryRun, &$mergedGroups, &$deletedRows) {
+            DB::transaction(function () use ($dup, $dryRun, $shortageRecorder, &$mergedGroups, &$deletedRows) {
                 $rows = Shortage::where('status', 'pending')
                     ->where('pharmacy_id', $dup->pharmacy_id)
                     ->where('product_id', $dup->product_id)
@@ -52,10 +62,6 @@ class DedupePendingShortages extends Command
 
                 $totalQty   = $rows->sum('quantity');
                 $latestDate = $rows->max('created_at');
-                $notes      = $rows->pluck('notes')->filter()->unique()->implode(' | ');
-
-                $keeper = $rows->first();
-                $toDeleteIds = $rows->skip(1)->pluck('id');
 
                 $this->line(sprintf(
                     '  صيدلية #%d / مادة #%d: %d صفوف → كمية إجمالية %d، أحدث تاريخ %s',
@@ -70,13 +76,26 @@ class DedupePendingShortages extends Command
                     return;
                 }
 
-                $keeper->forceFill([
-                    'quantity'   => $totalQty,
-                    'created_at' => $latestDate,
-                    'notes'      => $notes ?: $keeper->notes,
-                ])->save();
+                // ══ نُحوّل كل صف مكرر إلى "حدث نقص" (occurrence)، بما فيها
+                // ملاحظاته الأصلية (إن وُجدت) — ونُسلّمها كاملة للخدمة
+                // المشتركة لتقوم بالجمع + أخذ أحدث تاريخ + دمج الملاحظات. ══
+                $occurrences = $rows->map(fn (Shortage $row) => [
+                    'pharmacy_id' => $row->pharmacy_id,
+                    'product_id'  => $row->product_id,
+                    'quantity'    => $row->quantity,
+                    'occurred_at' => $row->created_at,
+                    'note'        => $row->notes,
+                ]);
 
+                $toDeleteIds = $rows->pluck('id');
+
+                // 🩹 نحذف كل الصفوف المكررة أولاً (بلا استثناء)، ثم نترك
+                // ShortageRecorderService يُعيد إنشاء صف واحد مُجمَّع من
+                // الصفر — بدل "تحديث صف واحد نُبقيه" كما كان بالأصل. النتيجة
+                // النهائية بقاعدة البيانات متطابقة، لكن منطق الحساب موحَّد.
                 Shortage::whereIn('id', $toDeleteIds)->delete();
+
+                $shortageRecorder->recordMany($occurrences);
 
                 $mergedGroups++;
                 $deletedRows += $toDeleteIds->count();

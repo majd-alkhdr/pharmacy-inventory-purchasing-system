@@ -3,24 +3,22 @@
 namespace App\Enums;
 
 /**
- * 🎯 بنفس فلسفة ShortageStatus وInvoiceStatus بالضبط (راجع تقرير [012]
- * بالمرحلة الأولى): بديل "Magic Strings" لحالات فاتورة الشراء، مع
- * casts() على موديل PurchaseOrder لضمان أن أي مقارنة تمر عبر PHP نفسه
- * (TypeError عند أي قيمة خاطئة) بدل تخزينها بصمت بقاعدة البيانات.
- *
- * ⚠️ درس مُستفاد من تقريرَي [017] و[020] بالمرحلة الأولى، مطبَّق هنا
- * منذ البداية: بما أننا نضيف casts() لهذا العمود من أول يوم (وليس
- * إضافة لاحقة على عمود قديم)، **لا يوجد خطر أثر رجعي هنا** — كل كود
- * جديد سيُكتب من الأساس وهو يعرف أن status كائن Enum، لا نص خام.
+ * 🆕 إضافة PartiallyCancelled: قرار المستخدم صراحة — فاتورة استُلمت
+ * جزئياً ثم أُلغي المتبقي منها **ليست نفس حالة** فاتورة لم يصلها شيء
+ * إطلاقاً (Cancelled). التمييز مهم لأن الكمية المتبقية غير المستلَمة
+ * بهذا السيناريو تحديداً هي مرشَّح حقيقي لمنطق "قنص نواقص السوق"
+ * (المادة طُلبت فعلاً ولم يستطع المورد توفيرها بالكامل)، بينما فاتورة
+ * أُلغيت بالكامل قبل أي استلام لا تحمل نفس الدلالة.
  */
 enum PurchaseOrderStatus: string
 {
-    case Draft            = 'draft';
-    case Approved         = 'approved';
-    case Sent              = 'sent';
-    case PartiallyReceived = 'partially_received';
-    case Received          = 'received';
-    case Cancelled         = 'cancelled';
+    case Draft              = 'draft';
+    case Approved           = 'approved';
+    case Sent                = 'sent';
+    case PartiallyReceived   = 'partially_received';
+    case Received            = 'received';
+    case Cancelled           = 'cancelled';
+    case PartiallyCancelled  = 'partially_cancelled';
 
     public function label(): string
     {
@@ -30,13 +28,36 @@ enum PurchaseOrderStatus: string
             self::Sent               => 'مُرسَلة للمورد 📤',
             self::PartiallyReceived  => 'استلام جزئي ⚠️',
             self::Received           => 'مستلمة بالكامل 📦',
-            self::Cancelled          => 'ملغاة ❌',
+            self::Cancelled          => 'ملغاة بالكامل ❌',
+            self::PartiallyCancelled => 'استلام جزئي — أُلغي الباقي 🚫',
         };
     }
 
-    /** هل ما زالت هذه الفاتورة قابلة للتعديل من المشرف قبل الإرسال؟ */
     public function isEditable(): bool
     {
         return $this === self::Draft;
+    }
+
+    /**
+     * 🎯 الإلغاء الكامل مسموح فقط قبل أي استلام فعلي (Draft/Approved/Sent).
+     * بعد بدء الاستلام الفعلي (PartiallyReceived)، الخيار المتاح هو
+     * "إلغاء المتبقي" فقط (partiallyCancel)، وليس إلغاء الفاتورة كاملة
+     * — لأن جزءاً منها وصل فعلياً وأصبح رصيداً حقيقياً بالمخزون.
+     */
+    public function canBeFullyCancelled(): bool
+    {
+        return in_array($this, [self::Draft, self::Approved, self::Sent], true);
+    }
+
+    /** الإلغاء الجزئي متاح فقط لفاتورة بها استلام جزئي فعلي وليس بعد */
+    public function canCancelRemaining(): bool
+    {
+        return $this === self::PartiallyReceived;
+    }
+
+    /** هل هذه الفاتورة "منتهية" ولا داعي لعرضها ضمن أي إجراء مستقبلي (اعتماد/إرسال/إلغاء)؟ */
+    public function isTerminal(): bool
+    {
+        return in_array($this, [self::Received, self::Cancelled, self::PartiallyCancelled], true);
     }
 }

@@ -13,8 +13,6 @@
     <style>
         /* ============================================================
            🎨 نظام الألوان والتنسيق الموحّد لكل واجهات لوحة التحكم
-           أي تعديل هنا ينعكس تلقائياً على كل الشاشات دون الحاجة لتكرار
-           الأنماط بكل ملف Blade على حدة.
            ============================================================ */
         :root {
             --c-primary: #0284c7;
@@ -51,13 +49,11 @@
             text-decoration: none;
         }
 
-        /* ---------- الهيكل العام ---------- */
         .app-shell {
             display: flex;
             min-height: 100vh;
         }
 
-        /* ---------- الشريط الجانبي ---------- */
         .sidebar {
             width: var(--sidebar-w);
             flex-shrink: 0;
@@ -208,7 +204,6 @@
             font-size: .68rem;
         }
 
-        /* ---------- المنطقة الرئيسية ---------- */
         .main-wrap {
             flex: 1;
             min-width: 0;
@@ -262,7 +257,6 @@
             display: none;
         }
 
-        /* ---------- عناصر مشتركة يُعاد استخدامها بكل الصفحات ---------- */
         .surface-card {
             background: #fff;
             border: 1px solid var(--c-border);
@@ -299,7 +293,6 @@
             box-shadow: 0 0 0 .15rem rgba(2, 132, 199, .15);
         }
 
-        /* ---------- الجوّال ---------- */
         @media (max-width: 991.98px) {
             .sidebar {
                 position: fixed;
@@ -366,10 +359,6 @@
                 class="sidebar-link {{ request()->routeIs('inventory.upload.form') || request()->routeIs('inventory.upload') ? 'active' : '' }}">
                 <i class="fa-solid fa-cloud-arrow-up"></i> رفع المبيعات والجرد اليومي
             </a>
-            {{--             <a href="{{ route('inventory.stock.upload.form') }}"
-                class="sidebar-link {{ request()->routeIs('inventory.stock.upload*') ? 'active' : '' }}">
-                <i class="fa-solid fa-warehouse"></i> جرد المستودع المركزي
-            </a> --}}
 
             <a href="{{ route('inventory.invoices.index') }}"
                 class="sidebar-link {{ request()->routeIs('inventory.invoice*') ? 'active' : '' }}">
@@ -389,8 +378,13 @@
     <i class="fa-solid fa-cart-shopping"></i>
     <span>المشتريات</span>
 </div>
+{{-- 🆕 جرد المشتريات الموحّد — يستبدل رابط "أسعار البيع الرسمية" القديم --}}
+<a href="{{ route('purchasing.purchase-inventory.form') }}"
+    class="sidebar-link {{ request()->routeIs('purchasing.purchase-inventory.*') ? 'active' : '' }}">
+    <i class="fa-solid fa-warehouse"></i> جرد المشتريات
+</a>
 <a href="{{ route('purchasing.orders.create') }}"
-    class="sidebar-link {{ request()->routeIs('purchasing.orders.create') ? 'active' : '' }}">
+    class="sidebar-link {{ request()->routeIs('purchasing.orders.create') || request()->routeIs('purchasing.orders.resolve-conflicts') ? 'active' : '' }}">
     <i class="fa-solid fa-wand-magic-sparkles"></i> توليد فواتير مقترحة
 </a>
 <a href="{{ route('purchasing.orders.index') }}"
@@ -399,7 +393,7 @@
 </a>
 <a href="{{ route('purchasing.suppliers.index') }}"
     class="sidebar-link {{ request()->routeIs('purchasing.suppliers.*') ? 'active' : '' }}">
-    <i class="fa-solid fa-truck-field"></i> الموردون والأسعار
+    <i class="fa-solid fa-truck-field"></i> الموردون والشركات المفضّلة
 </a>
 <a href="{{ route('purchasing.receiving.form') }}"
     class="sidebar-link {{ request()->routeIs('purchasing.receiving.*') ? 'active' : '' }}">
@@ -412,6 +406,13 @@
 <a href="{{ route('purchasing.historical-import.form') }}"
     class="sidebar-link {{ request()->routeIs('purchasing.historical-import.*') ? 'active' : '' }}">
     <i class="fa-solid fa-clock-rotate-left"></i> استيراد تاريخي
+</a>
+{{-- ⚠️ رابط "أسعار البيع الرسمية" أُزيل نهائياً من هنا — الشاشة أصبحت
+     جزءاً من "جرد المشتريات" الموحّد أعلاه. الكونترولر والـ Views القديمة
+     تبقى بالكود بلا حذف (تنظيف لاحق)، لكن لا وصول فعلياً من الواجهة. --}}
+<a href="{{ route('purchasing.categories.form') }}"
+    class="sidebar-link {{ request()->routeIs('purchasing.categories.*') ? 'active' : '' }}">
+    <i class="fa-solid fa-layer-group"></i> التصنيفات (الاستطباب)
 </a>
 <a href="{{ route('purchasing.budget-settings.index') }}"
     class="sidebar-link {{ request()->routeIs('purchasing.budget-settings.*') ? 'active' : '' }}">
@@ -458,12 +459,10 @@
             </header>
 
             <main class="content-area">
-                {{-- ✅ تنبيهات موحّدة لكل الصفحات بدل تكرارها بكل ملف --}}
                 <x-alert-messages />
                 <script>
                     const flashMsg = sessionStorage.getItem('import_flash_message');
                     if (flashMsg) {
-                        // بإمكانك حقنها بنفس تصميم alert الموجود بدل alert() الافتراضي
                         alert(flashMsg);
                         sessionStorage.removeItem('import_flash_message');
                         sessionStorage.removeItem('import_flash_type');
@@ -478,7 +477,6 @@
     <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // فتح/إغلاق الشريط الجانبي بوضع الجوّال
         const sidebarEl = document.getElementById('appSidebar');
         const backdropEl = document.getElementById('sidebarBackdrop');
         document.getElementById('sidebarToggleBtn')?.addEventListener('click', () => {
@@ -491,7 +489,6 @@
         });
     </script>
     @stack('scripts')
-    {{-- شاشة الانتظار الموحدة --}}
     <div id="globalLoadingOverlay" class="d-none">
         <div class="loading-box">
             <div class="spinner-border text-light mb-3" role="status"></div>
@@ -529,11 +526,9 @@
             overlay.classList.remove('d-none');
         }
 
-        // أي فورم عليه data-loading-message بيفعّل الشاشة تلقائياً عند الإرسال
         document.addEventListener('submit', function(e) {
             const form = e.target;
             if (form.dataset.loadingMessage !== undefined) {
-                // نأخر خطوة عشان نضمن إن الفورم submit فعلياً قبل ما نمنع أي تفاعل
                 setTimeout(() => showGlobalLoading(form.dataset.loadingMessage), 10);
             }
         });

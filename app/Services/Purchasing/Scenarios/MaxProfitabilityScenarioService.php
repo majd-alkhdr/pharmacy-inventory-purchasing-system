@@ -9,27 +9,28 @@ use App\Services\Purchasing\SupplierPricingResolver;
 use Illuminate\Support\Collection;
 
 /**
- * 🎯 يطبّق وصف مستندك بالكامل: *"يوجّه النظام الطلبات نحو الموردين الذين
- * يقدّمون أفضل بونص أو عروض مركّبة. يرفع كميات الطلب لأصناف التارجت إذا
- * كان ذلك سيحقق شريحة خصم أعلى."*
+ * 🎯 إعادة تعريف كاملة بناءً على توضيح المستخدم الصريح: الهدف الحقيقي
+ * هو "أي مادة تعطيني ربحاً أكبر عند بيعها" — أي **الهامش الفعلي**
+ * (سعر البيع الرسمي − التكلفة الصافية بعد بونص/خصم)، وليس فقط أرخص
+ * تكلفة شراء كما كانت النسخة السابقة تفعل (كانت تقارن تكلفة الوحدة
+ * فقط، بمعزل تام عن سعر البيع — وهذا لم يكن يقيس "ربحاً" حقيقياً).
  *
- * 🎓 قرار تصميمي مهم يستحق الشرح الصريح: **لماذا "تضخيم الكمية لتفعيل
- * شريحة أعلى" مقصور على أصناف التارجت فقط، وليس كل مادة؟**
- * لأن شراء كمية أكبر من المطلوب فعلياً = تجميد رأس مال إضافي بمخزون لم
- * يُطلب بعد. هذا قرار مالي يستحق مبرراً استراتيجياً واضحاً — ومستندك
- * حدّد هذا المبرر بدقة: "لضمان تحقيق أهداف المبيعات الاستراتيجية"
- * (تعريف is_target بجدول product_purchase_settings). لأي مادة أخرى غير
- * مُعلَّمة تارجت، هذا السيناريو يتصرّف تماماً كسيناريو "المتوازن": يختار
- * أفضل سعر **عند الكمية المطلوبة بالضبط**، دون تضخيم غير مبرَّر.
+ * 🎓 لماذا لا يزال تضخيم الكمية مقصوراً على أصناف التارجت فقط، ونفس
+ * سقف الحماية المالية (MAX_INFLATION_MULTIPLIER)؟ هذا القرار لم
+ * يتغيّر — لا يزال شراء كمية أكبر من المطلوب = تجميد رأس مال إضافي،
+ * وهذا قرار استراتيجي مقصور على أصناف التارجت فقط (نفس التبرير
+ * الأصلي، لم يتغيّر بإعادة التعريف).
  *
- * ⚠️ حماية إضافية أضفتها بنفسي لم يطلبها المستند صراحة لكنها ضرورة
- * مالية بديهية: **سقف تضخيم أقصى** (لا يتجاوز ضعف الكمية المطلوبة
- * أصلاً) — لمنع النظام من اقتراح شراء كميات هائلة لمجرد وجود عرض جذّاب
- * على شريحة بعيدة جداً عن الاحتياج الفعلي. راجع MAX_INFLATION_MULTIPLIER.
+ * ⚠️ حالة "لا يوجد سعر بيع مسجَّل لهذه المادة" (marginPerUnit = null):
+ * لا يمكن اعتبارها "ربحاً صفرياً" (قد تكون مادة بربح ضخم فعلياً، لكن
+ * سعرها لم يُستورَد بعد). لذلك: أي مرشّح بهامش معروف يُفضَّل دائماً
+ * على أي مرشّح بهامش غير معروف، بصرف النظر عن التكلفة — لأننا لا نملك
+ * معلومة كافية للمفاضلة الصحيحة بالحالة الثانية. فقط لو **كل** المرشحين
+ * بلا سعر بيع مسجَّل، نتراجع لاختيار الأرخص تكلفة (سلوك السيناريو
+ * المتوازن) كحل احتياطي معقول، مع علامة صريحة بالتفسير النهائي.
  */
 class MaxProfitabilityScenarioService implements PurchaseScenarioStrategy
 {
-    /** 🩹 حماية مالية: لا نضخّم الكمية لأكثر من ضعف الاحتياج الفعلي مهما كان العرض مغرياً */
     private const MAX_INFLATION_MULTIPLIER = 2;
 
     public function __construct(
@@ -43,22 +44,81 @@ class MaxProfitabilityScenarioService implements PurchaseScenarioStrategy
             return null;
         }
 
+        $sellingPrice = $product->currentSellingPrice();
+
         $candidates = collect([$this->pricingResolver->resolveBestChoiceAt($product, $demand->requiredQty)])
-            ->filter();
+            ->filter()
+            ->map(fn (PurchaseLineDecision $d) => $this->withMargin($d, $sellingPrice));
 
         if ($product->isTarget()) {
-            $candidates = $candidates->merge($this->tierEscalationCandidates($product, $demand->requiredQty));
+            $candidates = $candidates->merge(
+                $this->tierEscalationCandidates($product, $demand->requiredQty, $sellingPrice)
+            );
         }
 
-        return $candidates->isEmpty() ? null : $candidates->sortBy('unitCost')->first();
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        return $this->pickBest($candidates, $sellingPrice === null);
     }
 
     /**
-     * يفحص كل عروض كل الموردين المرتبطين بهذه المادة، ويُولّد "مرشحاً"
-     * إضافياً لكل شريحة تتجاوز الاحتياج الحالي لكن تبقى ضمن سقف الحماية
-     * المالية — لنقارنها لاحقاً بالخيار الأساسي حسب التكلفة الصافية.
+     * 🎯 قلب إعادة التصميم: لو الهامش معروف (سعر بيع مسجَّل)، نختار
+     * أعلى هامش صافٍ للوحدة. لو غير معروف للجميع، نتراجع لأرخص تكلفة
+     * مع ملاحظة صريحة أن هذا اختيار احتياطي بانتظار تسجيل سعر البيع.
      */
-    private function tierEscalationCandidates(Product $product, int $requiredQty): Collection
+    private function pickBest(Collection $candidates, bool $marginUnknownForAll): ?PurchaseLineDecision
+    {
+        if ($marginUnknownForAll) {
+            $best = $candidates->sortBy('unitCost')->first();
+
+            return $best ? $this->appendNote($best, '⚠️ لا يوجد سعر بيع مسجَّل لهذه المادة بعد — تم اختيار أرخص تكلفة احتياطياً بدل مقارنة الربح الفعلي. سجّل سعر البيع لتفعيل مقارنة الربحية الحقيقية.') : null;
+        }
+
+        return $candidates->sortByDesc('marginPerUnit')->first();
+    }
+
+    private function withMargin(PurchaseLineDecision $decision, ?float $sellingPrice): PurchaseLineDecision
+    {
+        $margin = $sellingPrice === null ? null : round($sellingPrice - $decision->unitCost, 4);
+
+        return new PurchaseLineDecision(
+            productId: $decision->productId,
+            supplierProductId: $decision->supplierProductId,
+            finalQty: $decision->finalQty,
+            unitCost: $decision->unitCost,
+            bonusQty: $decision->bonusQty,
+            lineTotalCost: $decision->lineTotalCost,
+            scenarioNote: $decision->scenarioNote,
+            hasActiveOffer: $decision->hasActiveOffer,
+            marginPerUnit: $margin,
+        );
+    }
+
+    private function appendNote(PurchaseLineDecision $decision, string $extra): PurchaseLineDecision
+    {
+        $note = $decision->scenarioNote ? "{$decision->scenarioNote} {$extra}" : $extra;
+
+        return new PurchaseLineDecision(
+            productId: $decision->productId,
+            supplierProductId: $decision->supplierProductId,
+            finalQty: $decision->finalQty,
+            unitCost: $decision->unitCost,
+            bonusQty: $decision->bonusQty,
+            lineTotalCost: $decision->lineTotalCost,
+            scenarioNote: $note,
+            hasActiveOffer: $decision->hasActiveOffer,
+            marginPerUnit: $decision->marginPerUnit,
+        );
+    }
+
+    /**
+     * يفحص كل شرائح عروض كل الموردين المرتبطين بهذه المادة، ويُولّد
+     * مرشحاً إضافياً لكل شريحة تتجاوز الاحتياج الحالي لكن تبقى ضمن سقف
+     * الحماية المالية — لنقارنها لاحقاً بالخيار الأساسي حسب **الهامش**.
+     */
+    private function tierEscalationCandidates(Product $product, int $requiredQty, ?float $sellingPrice): Collection
     {
         $ceiling = $requiredQty * self::MAX_INFLATION_MULTIPLIER;
         $candidates = collect();
@@ -67,27 +127,27 @@ class MaxProfitabilityScenarioService implements PurchaseScenarioStrategy
             foreach ($supplierProduct->offers as $offer) {
                 $isEligibleTier = $offer->min_quantity > $requiredQty
                     && $offer->min_quantity <= $ceiling
-                    && $offer->isActiveNow();
+                    && $offer->isActiveNow()
+                    && $offer->hasAnyBenefit();
 
                 if (!$isEligibleTier) {
                     continue;
                 }
 
-                // 🩹 نمرر $supplierProduct المتوفر أصلاً بالسياق الخارجي بدل
-                // الاعتماد على $offer->supplierProduct (كان سيُنفّذ استعلام
-                // إضافي غير ضروري لكل عرض — N+1 Query صغير لكن قابل للتفادي).
                 $decision = $this->pricingResolver->evaluateAt($supplierProduct, $offer->min_quantity);
 
-                $candidates->push(new PurchaseLineDecision(
+                $withNote = new PurchaseLineDecision(
                     productId: $decision->productId,
                     supplierProductId: $decision->supplierProductId,
                     finalQty: $decision->finalQty,
                     unitCost: $decision->unitCost,
                     bonusQty: $decision->bonusQty,
                     lineTotalCost: $decision->lineTotalCost,
-                    scenarioNote: "صنف تارجت — رُفعت الكمية إلى {$offer->min_quantity} لتفعيل شريحة عرض أفضل ({$offer->bonus_type->label()}).",
+                    scenarioNote: "صنف تارجت — رُفعت الكمية إلى {$offer->min_quantity} لتفعيل شريحة أعلى ({$offer->label()})، بحثاً عن أعلى ربح صافٍ للوحدة.",
                     hasActiveOffer: true,
-                ));
+                );
+
+                $candidates->push($this->withMargin($withNote, $sellingPrice));
             }
         }
 

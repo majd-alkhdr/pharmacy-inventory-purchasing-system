@@ -8,7 +8,7 @@ use App\Models\Shortage;
 use App\Models\TemporaryShortage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-
+use App\Services\Inventory\ShortageRecorderService;
 /**
  * 🎯 المسؤولية الوحيدة: تحويل صفوف temporary_shortages المُطابَقة (يدوياً
  * أو تلقائياً) إلى سجلات shortages نهائية، مع دمج الكميات مع أي نقص معلّق
@@ -16,6 +16,9 @@ use Illuminate\Support\Str;
  */
 class ShortageMappingService
 {
+    public function __construct(
+        private readonly ShortageRecorderService $shortageRecorder,
+    ) {}
     public function applyPharmacyMappingMemory(string $sessionId): void
     {
         DB::statement("
@@ -75,62 +78,32 @@ class ShortageMappingService
     }
 
     public function finalizeShortagesImport(string $sessionId): string
-    {
-        $aggregated = TemporaryShortage::forSession($sessionId)
-            ->whereNotNull('pharmacy_id')->whereNotNull('product_id')
-            ->selectRaw('pharmacy_id, product_id, SUM(quantity) as total_quantity, MAX(shortage_date) as latest_date')
-            ->groupBy('pharmacy_id', 'product_id')
-            ->get();
+{
+    $aggregated = TemporaryShortage::forSession($sessionId)
+        ->whereNotNull('pharmacy_id')->whereNotNull('product_id')
+        ->selectRaw('pharmacy_id, product_id, SUM(quantity) as total_quantity, MAX(shortage_date) as latest_date')
+        ->groupBy('pharmacy_id', 'product_id')
+        ->get();
 
-        $importedCount = $aggregated->count();
+    $importedCount = $aggregated->count();
 
-        if ($importedCount > 0) {
-            $existing = Shortage::pending()
-                ->whereIn('pharmacy_id', $aggregated->pluck('pharmacy_id')->unique())
-                ->whereIn('product_id', $aggregated->pluck('product_id')->unique())
-                ->get()
-                ->keyBy(fn($s) => $s->pharmacy_id . '_' . $s->product_id);
-
-            $insertRows = [];
-            foreach ($aggregated as $row) {
-                $key   = $row->pharmacy_id . '_' . $row->product_id;
-                $match = $existing->get($key);
-
-                if ($match) {
-                    $latestDate = $row->latest_date && (!$match->created_at || $row->latest_date > $match->created_at->toDateString())
-                        ? $row->latest_date
-                        : $match->created_at;
-
-                    $match->forceFill([
-                        'quantity'   => $match->quantity + $row->total_quantity,
-                        'created_at' => $latestDate,
-                        'notes'      => $match->appendResolutionNote("دُمج معه {$row->total_quantity} من استيراد تاريخي"),
-                    ])->save();
-                    continue;
-                }
-
-                $insertRows[] = [
-                    'pharmacy_id' => $row->pharmacy_id,
-                    'product_id'  => $row->product_id,
-                    'quantity'    => $row->total_quantity,
-                    'status'      => 'pending',
-                    'notes'       => 'مستورد من ملف — تاريخ النقص: ' . $row->latest_date,
-                    'created_at'  => $row->latest_date ?? now(),
-                    'updated_at'  => now(),
-                ];
-            }
-
-            if (!empty($insertRows)) {
-                foreach (array_chunk($insertRows, 500) as $chunk) {
-                    DB::table('shortages')->insert($chunk);
-                }
-            }
-        }
-
-        TemporaryShortage::forSession($sessionId)->delete();
-
-        return "✅ تم معالجة {$importedCount} تركيبة (صيدلية-مادة)، وتم دمج المتكرر منها مع النواقص المعلقة القائمة.";
+    if ($importedCount > 0) {
+        // 🎯 نفس منطق الدمج المستخدم بالرفع اليومي بالضبط — مصدر حقيقة واحد
+        // بدل نسخة موازية هنا (راجع ShortageRecorderService لتفاصيل الدمج).
+        $this->shortageRecorder->recordMany(
+            $aggregated->map(fn ($row) => [
+                'pharmacy_id' => $row->pharmacy_id,
+                'product_id'  => $row->product_id,
+                'quantity'    => $row->total_quantity,
+                'occurred_at' => $row->latest_date,
+            ])
+        );
     }
+
+    TemporaryShortage::forSession($sessionId)->delete();
+
+    return "✅ تم معالجة {$importedCount} تركيبة (صيدلية-مادة)، وتم دمج المتكرر منها مع النواقص المعلقة القائمة.";
+}
 
     private function splitPharmacyChoices(array $pharmacies): array
     {

@@ -51,11 +51,18 @@
                 </thead>
                 <tbody>
                     @forelse ($orders as $order)
+                        @php
+                            $statusStyle = match (true) {
+                                in_array($order->status->value, ['cancelled', 'partially_cancelled']) => 'background:#fef2f2; color:#b91c1c; border:1px solid #fecaca;',
+                                $order->status->value === 'received' => 'background:#f0fdf4; color:#166534; border:1px solid #bbf7d0;',
+                                default => 'background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-secondary);',
+                            };
+                        @endphp
                         <tr>
                             <td class="fw-bold text-dark">#{{ $order->id }}</td>
                             <td class="fw-bold text-primary">{{ $order->supplier->name }}</td>
                             <td>
-                                <span class="badge px-2 py-1 rounded-2" style="background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-secondary);">
+                                <span class="badge px-2 py-1 rounded-2" style="{{ $statusStyle }}">
                                     {{ $order->status->label() }}
                                 </span>
                                 @if ($order->isOverBudget())
