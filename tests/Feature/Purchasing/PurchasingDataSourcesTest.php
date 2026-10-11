@@ -109,13 +109,18 @@ final class PurchasingDataSourcesTest extends TestCase
         $importer->import($this->materialMaster([['111', null, null, 12.5, null, null]]));
         $this->assertSame(2, ProductPriceChange::count());
 
+        // الاتجاهان يُرصدان بنفس الحساب؛ الأكبر تغيّراً (مطلقاً) أولاً: +25% قبل −10%. الثابت لا يظهر.
         $variances = $this->app->make(CostVarianceMonitorService::class)->detectVariances();
-        $this->assertCount(1, $variances); // الانخفاض لا يُنبَّه عنه
-        $row = $variances->first();
-        $this->assertSame($up->id, $row->product->id);
-        $this->assertSame([10.0, 12.5, 2.5, 25.0], [$row->previous_price, $row->current_price, $row->variance_amount, $row->variance_percent]);
+        $this->assertCount(2, $variances);
+        [$first, $second] = [$variances[0], $variances[1]];
+        $this->assertSame($up->id, $first->product->id);
+        $this->assertSame([10.0, 12.5, 2.5, 25.0], [$first->previous_price, $first->current_price, $first->variance_amount, $first->variance_percent]);
+        $this->assertSame($down->id, $second->product->id);
+        $this->assertSame([20.0, 18.0, -2.0, -10.0], [$second->previous_price, $second->current_price, $second->variance_amount, $second->variance_percent]);
 
-        $this->actingAsPurchasing()->get(route('purchasing.reports.cost-variance'))->assertOk()->assertSee('يرتفع')->assertDontSee('ينخفض');
+        $this->actingAsPurchasing()->get(route('purchasing.reports.cost-variance'))->assertOk()
+            ->assertSee('يرتفع')->assertSee('ينخفض')
+            ->assertSee('+25%')->assertSee('−10%');
     }
 
     public function test_last_purchase_date_comes_from_the_latest_received_purchase_order_only(): void

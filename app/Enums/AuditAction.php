@@ -36,6 +36,9 @@ enum AuditAction: string
     case PurchaseItemApprovedQtyChanged = 'purchase_item.approved_qty_changed';
     case PurchaseItemRemoved = 'purchase_item.removed';
 
+    // ── بيانات المادة الأساسية (شاشة التحقق بالمشتريات) ──
+    case ProductMasterFieldCorrected = 'product.master_field_corrected';
+
     public function label(): string
     {
         return match ($this) {
@@ -53,6 +56,7 @@ enum AuditAction: string
             self::PharmacyTransferDismissed => 'رفض مناقلة بين صيدليتين',
             self::PurchaseItemApprovedQtyChanged => 'تعديل الكمية المعتمدة بفاتورة شراء',
             self::PurchaseItemRemoved => 'حذف مادة من فاتورة شراء',
+            self::ProductMasterFieldCorrected => 'تصحيح يدوي لبيانات مادة',
         };
     }
 }

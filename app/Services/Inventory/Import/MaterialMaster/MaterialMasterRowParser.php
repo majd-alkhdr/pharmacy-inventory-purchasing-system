@@ -27,6 +27,7 @@ final class MaterialMasterRowParser
 {
     public const SKIP_NO_BARCODE = 'صف بلا رمز مادة';
     public const SKIP_NOTHING_TO_UPDATE = 'صف بلا أي بيانات فعلية (كل الأعمدة الاختيارية فارغة)';
+    public const SKIP_ZERO_PACK_SIZE = 'حجم عبوة صفر — الصف كله لم يُطبَّق (حجم العبوة يجب أن يكون 1 على الأقل)';
 
     private const FLOAT_TOLERANCE_DECIMALS = 6;
 
@@ -100,6 +101,14 @@ final class MaterialMasterRowParser
                     $diagnostics,
                 ),
             );
+
+            // 🆕 عبوة بصفر وحدة لا معنى لها (ونفس حد شاشة التصحيح اليدوي ≥ 1). الصف كله يُتخطّى بتحذير ظاهر
+            // — لا يُطبَّق منه جزء — لأن صفراً بهذا العمود يدل غالباً على صف معطوب لا على قيمة مقصودة.
+            // بقية الملف تُستورد عادياً. (الفراغ يبقى "بلا تغيير" كما هو، لا علاقة له بهذه القاعدة.)
+            if ($row->packSize === 0) {
+                $diagnostics->recordSkippedRow($rowNumber, self::SKIP_ZERO_PACK_SIZE);
+                continue;
+            }
 
             if ($row->isEntirelyBlank()) {
                 $diagnostics->recordSkippedRow($rowNumber, self::SKIP_NOTHING_TO_UPDATE);

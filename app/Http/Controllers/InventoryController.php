@@ -770,7 +770,7 @@ class InventoryController extends Controller
                 \App\Enums\ImportFileType::MaterialMaster,
                 $request->file('material_master_file'),
                 function (\App\Models\ImportLog $log) use ($path) {
-                    $outcome = $this->materialMasterImporter->import(Storage::path($path));
+                    $outcome = $this->materialMasterImporter->import(Storage::path($path), $log->id);
                     $this->importHistory->complete($log, $outcome);
 
                     return $outcome;

@@ -26,6 +26,7 @@ use App\Http\Controllers\Purchasing\SupplierOfferController;
 use App\Http\Controllers\Purchasing\SupplierProductController;
 use App\Http\Controllers\Purchasing\ManualSalesRateController;
 use App\Http\Controllers\Purchasing\ProductSearchController;
+use App\Http\Controllers\Purchasing\ProductMasterDataController;
 use App\Http\Controllers\TransfersReportController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Purchasing\Reports\PurchaseValueReportController;
@@ -338,6 +339,10 @@ Route::prefix('purchasing')->name('purchasing.')->middleware(['auth', 'active', 
     Route::post('manual-sales-rate/save-mapping', [ManualSalesRateController::class, 'saveMapping'])->name('manual-sales-rate.save-mapping');
 
     Route::get('products-search', [ProductSearchController::class, 'search'])->name('products-search');
+
+    // 🆕 بيانات المادة الأساسية: عرض + آخر كاتب لكل حقل + تصحيح يدوي (يكتب فوقه الرفع التالي).
+    Route::get('product-master-data', [ProductMasterDataController::class, 'show'])->name('product-master-data.show');
+    Route::put('product-master-data/{product}', [ProductMasterDataController::class, 'update'])->name('product-master-data.update');
 });
 
 /*

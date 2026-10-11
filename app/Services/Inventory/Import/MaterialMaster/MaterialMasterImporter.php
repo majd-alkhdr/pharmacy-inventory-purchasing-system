@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Services\Inventory\Import\MaterialMaster;
 
 use App\Enums\ImportFileType;
+use App\Enums\ProductMasterField;
 use App\Services\Inventory\CentralInventoryPriceRecorderService;
+use App\Services\Inventory\ProductMasterData\ProductFieldSourceRecorder;
 use App\Services\Inventory\Import\Exceptions\InvalidImportFileException;
 use App\Services\Inventory\Import\Support\ImportDiagnostics;
 use App\Services\Inventory\Import\Validation\CrossFileCodeValidator;
@@ -46,13 +48,15 @@ final class MaterialMasterImporter
         private readonly CentralInventoryPriceRecorderService $priceRecorder,
         private readonly CrossFileCodeValidator $crossFileValidator = new CrossFileCodeValidator(), // 🆕 (أ.4)
         private readonly MaterialPriceHistoryRecorder $priceHistory = new MaterialPriceHistoryRecorder(),
+        private readonly ProductFieldSourceRecorder $fieldSources = new ProductFieldSourceRecorder(),
     ) {
     }
 
     /**
+     * @param  int|null  $importLogId  سجل هذا الرفع (أ.1) — يُوسَم به كل حقل حملت خليته قيمة، لشاشة بيانات المادة.
      * @throws InvalidImportFileException ملف تالف أو رؤوس لا تطابق الترتيب المتفق عليه — قبل أي كتابة
      */
-    public function import(string $absolutePath): MaterialMasterImportOutcome
+    public function import(string $absolutePath, ?int $importLogId = null): MaterialMasterImportOutcome
     {
         $diagnostics = new ImportDiagnostics();
         $merged = $this->mergeRowsByBarcode($this->parser->parse($absolutePath, $diagnostics), $diagnostics, $rowsInFile);
@@ -71,6 +75,7 @@ final class MaterialMasterImporter
         $unmatched = [];
         $updateRows = [];
         $pricesByProductId = [];
+        $fieldsByProductId = []; // الحقول التي حملت قيمة فعلاً — الخلية الفارغة لا تكتب فلا تُنسَب لهذا الرفع
         $matchedFirstRows = []; // 🆕 (أ.4)
         $unmatchedFirstRows = []; // 🆕 (أ.4)
 
@@ -89,6 +94,8 @@ final class MaterialMasterImporter
             if ($fields['price'] !== null) {
                 $pricesByProductId[$existing->id] = $fields['price'];
             }
+
+            $fieldsByProductId[$existing->id] = self::fieldsWithValues($fields);
 
             $updateRow = $this->buildUpdateRowIfChanged($existing, $fields);
             if ($updateRow !== null) {
@@ -109,7 +116,7 @@ final class MaterialMasterImporter
 
         $pricesChanged = 0;
 
-        DB::transaction(function () use ($updateRows, $pricesByProductId, &$pricesChanged): void {
+        DB::transaction(function () use ($updateRows, $pricesByProductId, $fieldsByProductId, $importLogId, &$pricesChanged): void {
             foreach (array_chunk($updateRows, self::UPDATE_CHUNK) as $chunk) {
                 DB::table('products')->upsert($chunk, ['barcode'], ['name', 'company', 'pack_size', 'min_reorder_gap', 'updated_at']);
             }
@@ -117,9 +124,38 @@ final class MaterialMasterImporter
             // 🆕 سجل التغيّر (قديم ← جديد) يُكتب أولاً — قبل أن يصبح السعر الجديد هو "المخزَّن".
             $this->priceHistory->recordChanges($pricesByProductId);
             $pricesChanged = $this->priceRecorder->recordChanges($pricesByProductId);
+
+            // آخر كاتب لكل حقل كُتب فعلاً — بعد كتابة السعر (وقت السجل ≥ وقت سطر السعر).
+            if ($importLogId !== null) {
+                $this->fieldSources->recordUpload($importLogId, array_filter($fieldsByProductId));
+            }
         });
 
         return new MaterialMasterImportOutcome($rowsInFile, count($updateRows), $pricesChanged, $unmatched, $diagnostics);
+    }
+
+    /**
+     * @param  array{name: ?string, company: ?string, price: ?float, packSize: ?int, minReorderGap: ?int}  $fields
+     * @return list<ProductMasterField>
+     */
+    private static function fieldsWithValues(array $fields): array
+    {
+        $map = [
+            'name' => ProductMasterField::Name,
+            'company' => ProductMasterField::Company,
+            'price' => ProductMasterField::Price,
+            'packSize' => ProductMasterField::PackSize,
+            'minReorderGap' => ProductMasterField::MinReorderGap,
+        ];
+
+        $present = [];
+        foreach ($map as $key => $field) {
+            if ($fields[$key] !== null) {
+                $present[] = $field;
+            }
+        }
+
+        return $present;
     }
 
     /**

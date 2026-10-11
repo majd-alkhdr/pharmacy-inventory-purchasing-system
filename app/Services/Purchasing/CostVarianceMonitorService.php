@@ -8,7 +8,7 @@ use App\Models\ProductPriceChange;
 use Illuminate\Support\Collection;
 
 /**
- * 🎯 تنبيه بصري عند ارتفاع "سعر المادة" عن قيمته السابقة.
+ * 🎯 تنبيه بصري عند أي تغيّر بـ"سعر المادة" عن قيمته السابقة — ارتفاعاً أو انخفاضاً.
  *
  * 🆕 المصدر: سجل تغيّرات ملف الأصناف (product_price_changes) — لا product_purchase_prices
  * (مفهوم "آخر سعر شراء" من ملف جرد المشتريات أُلغي بالكامل). لكل مادة لها تغيّر واحد على الأقل:
@@ -16,7 +16,8 @@ use Illuminate\Support\Collection;
  *   السعر الحالي  = "سعر المادة" المخزَّن الآن (آخر سطر central_inventory_prices)
  *   السعر السابق = old_price بآخر سطر تغيّر لهذه المادة (= القيمة قبل آخر تغيير مباشرة)
  *
- * يُعرض الارتفاع فقط — الانخفاض خبر جيد لا يحتاج تنبيهاً (نفس سلوك النسخة السابقة).
+ * الاتجاهان يُعرضان بنفس الحساب (الفرق = الحالي − السابق، النسبة = الفرق ÷ السابق × 100)؛ الإشارة
+ * تحدد الاتجاه. الترتيب حسب حجم التغيّر المطلق، فأكبر تذبذب أولاً أياً كان اتجاهه.
  * ثلاثة استعلامات ثابتة مهما كان عدد المواد (لا N+1).
  */
 class CostVarianceMonitorService
@@ -46,7 +47,8 @@ class CostVarianceMonitorService
             ->map(function (float $previous, int $productId) use ($currentByProduct, $products) {
                 $current = $currentByProduct[$productId] ?? null;
 
-                if ($current === null || $previous <= 0 || $current <= $previous || !$products->has($productId)) {
+                // لا سعر حالي، أو سابق صفر (نسبة غير معرَّفة)، أو لا تغيّر فعلي (عاد السعر لقيمته) ⇒ لا تنبيه.
+                if ($current === null || $previous <= 0 || round($current, 2) === round($previous, 2) || !$products->has($productId)) {
                     return null;
                 }
 
@@ -59,7 +61,7 @@ class CostVarianceMonitorService
                 ];
             })
             ->filter()
-            ->sortByDesc('variance_percent')
+            ->sortByDesc(fn (object $row) => abs($row->variance_percent))
             ->values();
     }
 }

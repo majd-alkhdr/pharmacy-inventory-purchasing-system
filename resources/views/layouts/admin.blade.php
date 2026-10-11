@@ -1006,6 +1006,11 @@
                     <i class="fa-solid fa-chevron-down chevron"></i>
                 </button>
                 <div class="collapse {{ $purchasingActive ? 'show' : '' }}" id="collapsePurchasing">
+                    <a href="{{ route('purchasing.product-master-data.show') }}"
+                        class="sidebar-link {{ request()->routeIs('purchasing.product-master-data.*') ? 'active' : '' }}">
+                        <i class="fa-solid fa-pen-to-square"></i> بيانات المادة
+                    </a>
+
                     {{-- 🆕 يستبدل رابط "الحد الأدنى للمخزون" القديم بالكامل --}}
                     <a href="{{ route('purchasing.manual-sales-rate.form') }}"
                         class="sidebar-link {{ request()->routeIs('purchasing.manual-sales-rate.*') ? 'active' : '' }}">
