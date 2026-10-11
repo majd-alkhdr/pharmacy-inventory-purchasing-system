@@ -82,6 +82,9 @@ class InventoryValueReportService
             'locations_count' => $rows->count(),
             'product_count'   => $allProductIdsDistinct->count(),
             'company_count'   => $allCompaniesDistinct->count(),
+            // 🩹 مواد برصيد لكن بلا أي "سعر مادة" مسجَّل — تُحسب قيمتها صفراً، فالإجمالي أقل من الحقيقة
+            // بقدرها. تُعرَض صراحة بدل أن يبدو الإجمالي كاملاً.
+            'unpriced_product_count' => $allProductIdsDistinct->reject(fn ($id) => isset($prices[$id]))->count(),
         ];
 
         return (object) ['rows' => $rows, 'totals' => $totals];

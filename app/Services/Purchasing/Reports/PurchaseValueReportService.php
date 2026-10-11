@@ -28,8 +28,8 @@ class PurchaseValueReportService
         $rows = PurchaseOrderItem::query()
             ->join('products', 'products.id', '=', 'purchase_order_items.product_id')
             ->where('purchase_order_items.received_qty', '>', 0)
-            ->when($dateFrom, fn($q) => $q->whereDate('purchase_order_items.updated_at', '>=', $dateFrom))
-            ->when($dateTo, fn($q) => $q->whereDate('purchase_order_items.updated_at', '<=', $dateTo))
+            ->when($dateFrom, fn($q) => $q->whereRaw(PurchaseOrderItem::RECEIPT_DATE_SQL.' >= ?', [$dateFrom]))
+            ->when($dateTo, fn($q) => $q->whereRaw(PurchaseOrderItem::RECEIPT_DATE_SQL.' <= ?', [$dateTo]))
             ->select(
                 'purchase_order_items.received_qty',
                 'purchase_order_items.unit_cost',

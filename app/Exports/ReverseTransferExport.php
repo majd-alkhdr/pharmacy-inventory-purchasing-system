@@ -26,7 +26,9 @@ class ReverseTransferExport implements FromCollection, WithHeadings, WithMapping
 
     public function collection()
     {
+        // 🩹 بند "superseded" (لم يعد الفائض يغطيه لحظة التنفيذ) لم يُحجز ولا يُنقل — لا يُصدَّر للتحضير.
         return ReverseTransferItem::where('reverse_transfer_id', $this->reverseTransferId)
+            ->executedLines()
             ->with(['product', 'reverseTransfer.pharmacy'])
             ->get();
     }

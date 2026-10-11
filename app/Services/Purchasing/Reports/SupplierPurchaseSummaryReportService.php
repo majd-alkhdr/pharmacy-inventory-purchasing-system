@@ -26,8 +26,8 @@ class SupplierPurchaseSummaryReportService
             ->join('suppliers', 'suppliers.id', '=', 'purchase_orders.supplier_id')
             ->join('products', 'products.id', '=', 'purchase_order_items.product_id')
             ->whereIn('purchase_orders.status', self::RECEIVED_STATUSES)
-            ->when($dateFrom, fn($q) => $q->whereDate('purchase_order_items.updated_at', '>=', $dateFrom))
-            ->when($dateTo, fn($q) => $q->whereDate('purchase_order_items.updated_at', '<=', $dateTo))
+            ->when($dateFrom, fn($q) => $q->whereRaw(PurchaseOrderItem::RECEIPT_DATE_SQL.' >= ?', [$dateFrom]))
+            ->when($dateTo, fn($q) => $q->whereRaw(PurchaseOrderItem::RECEIPT_DATE_SQL.' <= ?', [$dateTo]))
             ->select(
                 'suppliers.id as supplier_id',
                 'suppliers.name as supplier_name',

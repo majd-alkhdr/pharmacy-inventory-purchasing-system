@@ -166,7 +166,7 @@
                     @forelse ($items as $item)
                         <tr>
                             <td class="text-nowrap fw-bold text-dark">
-                                {{ \Carbon\Carbon::parse($item->reverseTransfer->date)->format('Y-m-d') }}
+                                {{ $item->reverseTransfer->movementDate()->format('Y-m-d') }}
                             </td>
                             <td>
                                 <span class="fw-bold text-primary">

@@ -614,7 +614,7 @@ class InventoryController extends Controller
         $items = ReverseTransferItem::filter($filters)
             ->with(['reverseTransfer.pharmacy', 'product'])
             ->join('reverse_transfers', 'reverse_transfers.id', '=', 'reverse_transfer_items.reverse_transfer_id')
-            ->orderByDesc('reverse_transfers.date')
+            ->orderByRaw(\App\Models\ReverseTransfer::MOVEMENT_DATE_SQL.' DESC')
             ->select('reverse_transfer_items.*')
             ->paginate(50)
             ->withQueryString();

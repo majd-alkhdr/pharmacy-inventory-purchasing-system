@@ -3,10 +3,15 @@
 
 namespace App\Services\Inventory\Reports;
 
+use App\Enums\PharmacyTransferStatus;
+use App\Enums\TransferItemExecutionStatus;
 use App\Models\InvoiceItem;
+use App\Models\PharmacyTransferItem;
+use App\Models\ReverseTransfer;
 use App\Models\ReverseTransferItem;
 use App\Models\WatchedProduct;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 /**
  * 🎯 "تقرير مراقبة حركة مواد محدَّدة" — يعرض كل حركة لأصناف مُختارة صراحة
@@ -15,7 +20,7 @@ use Illuminate\Support\Collection;
  * 🎓 لماذا استعلام حي (Live Query) على الجداول الموجودة أصلاً، لا جدول
  * "سجل حركة" جديد يُكتَب إليه عند كل عملية؟ لأن كل حركة تهمنا هنا **مسجَّلة
  * بالفعل** بمكان واحد صحيح ووحيد: شحن فعلي = سطر InvoiceItem، مناقلة
- * عكسية = سطر ReverseTransferItem. نسخ هذه البيانات لجدول جديد يعني
+ * عكسية = سطر ReverseTransferItem، بين صيدليتين = سطر PharmacyTransferItem منفَّذ. نسخ هذه البيانات لجدول جديد يعني
  * مصدرَي حقيقة لنفس الواقعة، مع خطر انحرافهما عن بعضهما بمرور الوقت —
  * بلا أي فائدة حقيقية مقابل هذا الخطر، بما أن الاستعلام الحي بسيط وسريع
  * (نطاق محدود: أصناف مراقَبة فقط، لا النظام كله).
@@ -85,10 +90,9 @@ class ProductMovementReportService
             // 🆕 (ب.6) العكسية صارت "مقترحة" حتى تُنفَّذ — الحركة الفعلية = المنفَّذ فقط، وبنوده غير
             // الملغاة تلقائياً (NULL = سجلات ما قبل سير التنفيذ، طُبِّق أثرها وقتها).
             ->where('reverse_transfers.status', \App\Enums\ReverseTransferStatus::Executed->value)
-            ->where(fn ($q) => $q->whereNull('reverse_transfer_items.execution_status')
-                ->orWhere('reverse_transfer_items.execution_status', \App\Enums\TransferItemExecutionStatus::Executed->value))
+            ->executedLines()
             ->select(
-                'reverse_transfers.date',
+                DB::raw(ReverseTransfer::MOVEMENT_DATE_SQL.' as date'), // 🩹 يوم التنفيذ، لا يوم الاقتراح
                 'products.name as product_name',
                 'pharmacies.name as pharmacy_name',
                 'reverse_transfer_items.quantity',
@@ -103,6 +107,34 @@ class ProductMovementReportService
                 'quantity'      => (float) $row->quantity,
             ]);
 
-        return $forward->concat($reverse)->sortByDesc('date')->values();
+        // 🆕 حركة مباشرة بين صيدليتين — صارت حركة فعلية مع زر "تنفيذ" (ب.7)، فتُحسب هنا كبقية الحركات.
+        // المنفَّذ فقط، وبنوده التي تحرّكت فعلاً (لا "superseded"). التاريخ = يوم التنفيذ.
+        $interPharmacy = PharmacyTransferItem::query()
+            ->join('pharmacy_transfers', 'pharmacy_transfers.id', '=', 'pharmacy_transfer_items.pharmacy_transfer_id')
+            ->join('pharmacies as from_ph', 'from_ph.id', '=', 'pharmacy_transfers.from_pharmacy_id')
+            ->join('pharmacies as to_ph', 'to_ph.id', '=', 'pharmacy_transfers.to_pharmacy_id')
+            ->join('products', 'products.id', '=', 'pharmacy_transfer_items.product_id')
+            ->whereIn('pharmacy_transfer_items.product_id', $targetIds)
+            ->where('pharmacy_transfers.status', PharmacyTransferStatus::Completed->value)
+            ->where(fn ($q) => $q->whereNull('pharmacy_transfer_items.execution_status')
+                ->orWhere('pharmacy_transfer_items.execution_status', TransferItemExecutionStatus::Executed->value))
+            ->select(
+                DB::raw('COALESCE(pharmacy_transfers.executed_date, DATE(pharmacy_transfers.updated_at)) as date'),
+                'products.name as product_name',
+                'from_ph.name as from_name',
+                'to_ph.name as to_name',
+                'pharmacy_transfer_items.quantity',
+            )
+            ->get()
+            ->map(fn($row) => (object) [
+                'date'          => $row->date,
+                'product_name'  => $row->product_name,
+                'movement_type' => 'inter_pharmacy',
+                'from_label'    => $row->from_name,
+                'to_label'      => $row->to_name,
+                'quantity'      => (float) $row->quantity,
+            ]);
+
+        return $forward->concat($reverse)->concat($interPharmacy)->sortByDesc('date')->values();
     }
 }

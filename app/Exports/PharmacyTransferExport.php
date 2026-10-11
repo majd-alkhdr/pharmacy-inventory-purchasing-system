@@ -24,7 +24,10 @@ class PharmacyTransferExport implements FromCollection, WithHeadings, WithMappin
 
     public function collection()
     {
+        // 🩹 بند "superseded" (لم يعد الفائض يغطيه لحظة التنفيذ) لم يُحجز — لا يُرسَل لفريق التحضير لنقله.
         return PharmacyTransferItem::where('pharmacy_transfer_id', $this->pharmacyTransferId)
+            ->where(fn ($q) => $q->whereNull('execution_status')
+                ->orWhere('execution_status', \App\Enums\TransferItemExecutionStatus::Executed->value))
             ->with(['product', 'pharmacyTransfer.fromPharmacy', 'pharmacyTransfer.toPharmacy'])
             ->get();
     }

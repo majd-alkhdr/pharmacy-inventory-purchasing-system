@@ -40,13 +40,25 @@ class ReverseTransferItem extends Model
      */
     public function scopeFilter(Builder $query, array $filters): Builder
     {
-        return $query->whereHas('reverseTransfer', function (Builder $q) use ($filters) {
+        return $query->executedLines()->whereHas('reverseTransfer', function (Builder $q) use ($filters) {
             // 🆕 (ب.6) تقرير "ما عاد للمستودع" يعدّ المنفَّذ فقط — المقترحات لها لوحتها المستقلة
             // بنفس الشاشة، والمرفوضة/منتهية الدورة لم تُحرّك شيئاً فلا تُحسب كمية مُعادة.
+            // 🩹 التاريخ = يوم التنفيذ (ReverseTransfer::MOVEMENT_DATE_SQL)، لا يوم الاقتراح.
             $q->where('status', \App\Enums\ReverseTransferStatus::Executed)
                 ->forPharmacy($filters['pharmacy_id'] ?? null)
-                ->when($filters['date_from'] ?? null, fn(Builder $qq, $v) => $qq->whereDate('date', '>=', $v))
-                ->when($filters['date_to'] ?? null, fn(Builder $qq, $v) => $qq->whereDate('date', '<=', $v));
+                ->when($filters['date_from'] ?? null, fn(Builder $qq, $v) => $qq->whereRaw(ReverseTransfer::MOVEMENT_DATE_SQL.' >= ?', [$v]))
+                ->when($filters['date_to'] ?? null, fn(Builder $qq, $v) => $qq->whereRaw(ReverseTransfer::MOVEMENT_DATE_SQL.' <= ?', [$v]));
         });
+    }
+
+    /**
+     * 🩹 بنود تحرّكت فعلاً: منفَّذة، أو NULL (سجلات ما قبل سير التنفيذ — طُبِّق أثرها وقتها). البند
+     * "superseded" (لم يعد الفائض يغطيه لحظة التنفيذ) لم يتحرّك رغم أن مستنده "منفَّذ" — كان يُحسب
+     * بشاشة المناقلات العكسية وإجمالياتها بينما يستبعده التصدير والتقارير.
+     */
+    public function scopeExecutedLines(Builder $query): Builder
+    {
+        return $query->where(fn (Builder $q) => $q->whereNull('reverse_transfer_items.execution_status')
+            ->orWhere('reverse_transfer_items.execution_status', \App\Enums\TransferItemExecutionStatus::Executed->value));
     }
 }

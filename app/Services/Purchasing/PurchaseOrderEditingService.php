@@ -71,14 +71,14 @@ class PurchaseOrderEditingService
                 $before = $item->finalQuantity();
                 $after = $this->rounder->toWholeUnits($input['approved_qty']);
 
-                $item->update(['approved_qty' => $after]);
+                // 🩹 إجمالي السطر يتبع الكمية النهائية — كان يبقى "المقترحة × السعر" فيختلف مجموع الأسطر
+                // المعروضة عن إجمالي الفاتورة (المحسوب أدناه من الكمية النهائية).
+                $item->update(['approved_qty' => $after, 'line_total_cost' => round((float) $item->unit_cost * $after, 2)]);
                 $this->audit->recordChange(AuditAction::PurchaseItemApprovedQtyChanged, $item, 'approved_qty', $before, $after, $this->context($order, $item));
             }
 
-            // 🎯 إعادة حساب الإجمالي التقديري بعد التعديل — حالياً بلا أثر
-            // فعلي (unit_cost = 0 دائماً بمحرك القرار الحالي، راجع وثيقة
-            // التصميم §9)، لكن نُبقي هذا السطر جاهزاً لحظة عودة الأسعار
-            // مستقبلاً، بدل نسيان تحديث total_estimated_cost حينها.
+            // 🎯 إعادة حساب الإجمالي التقديري بعد التعديل = مجموع (سعر الوحدة × الكمية النهائية) — سعر الوحدة
+            // حقيقي الآن ("سعر المادة" وقت التوليد)، فهذا الإجمالي ومجموع أسطره متطابقان دائماً.
             $order->refresh();
             $order->update([
                 'total_estimated_cost' => round(

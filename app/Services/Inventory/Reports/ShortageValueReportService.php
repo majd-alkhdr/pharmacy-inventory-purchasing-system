@@ -58,6 +58,8 @@ class ShortageValueReportService
             'total_value'   => round($rows->sum('total_value'), 2),
             'product_count' => $valued->pluck('product_id')->unique()->count(),
             'company_count' => $valued->pluck('company')->filter()->unique()->count(),
+            // 🆕 نواقص لمواد بلا "سعر مادة" سارٍ بتاريخ آخر تحديث لها — قيمتها صفر؛ تُعرض صراحة.
+            'unpriced_product_count' => $valued->where('unpriced', true)->pluck('product_id')->unique()->count(),
         ];
 
         return (object) ['rows' => $rows, 'totals' => $totals];
@@ -73,6 +75,7 @@ class ShortageValueReportService
 
                 return $group->map(function ($row) use ($prices) {
                     $unitPrice = $prices[$row->product_id] ?? 0;
+                    $row->unpriced = !isset($prices[$row->product_id]);
                     $row->value = round($row->quantity * $unitPrice, 2);
                     return $row;
                 });

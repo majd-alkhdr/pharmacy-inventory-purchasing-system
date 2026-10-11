@@ -2,7 +2,9 @@
 
 namespace App\Exports;
 
+use App\Models\ReverseTransfer;
 use App\Models\ReverseTransferItem;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\WithHeadings;
@@ -29,14 +31,14 @@ class ReverseTransfersExport implements FromCollection, WithHeadings, WithMappin
             ->join('pharmacies', 'pharmacies.id', '=', 'reverse_transfers.pharmacy_id')
             ->join('products', 'products.id', '=', 'reverse_transfer_items.product_id')
             ->when($this->filters['pharmacy_id'] ?? null, fn($q, $v) => $q->where('reverse_transfers.pharmacy_id', $v))
-            ->when($this->filters['date_from'] ?? null, fn($q, $v) => $q->whereDate('reverse_transfers.date', '>=', $v))
-            ->when($this->filters['date_to'] ?? null, fn($q, $v) => $q->whereDate('reverse_transfers.date', '<=', $v))
+            // 🩹 التاريخ = يوم التنفيذ (لا يوم الاقتراح) — نفس قاعدة الشاشة والتقارير.
+            ->when($this->filters['date_from'] ?? null, fn($q, $v) => $q->whereRaw(ReverseTransfer::MOVEMENT_DATE_SQL.' >= ?', [$v]))
+            ->when($this->filters['date_to'] ?? null, fn($q, $v) => $q->whereRaw(ReverseTransfer::MOVEMENT_DATE_SQL.' <= ?', [$v]))
             // 🆕 (ب.6) نفس نطاق جدول التقرير بالشاشة: المنفَّذ فقط، بلا البنود الملغاة تلقائياً.
             ->where('reverse_transfers.status', \App\Enums\ReverseTransferStatus::Executed->value)
-            ->where(fn ($q) => $q->whereNull('reverse_transfer_items.execution_status')
-                ->orWhere('reverse_transfer_items.execution_status', \App\Enums\TransferItemExecutionStatus::Executed->value))
+            ->executedLines()
             ->select([
-                'reverse_transfers.date',
+                DB::raw(ReverseTransfer::MOVEMENT_DATE_SQL.' as date'),
                 'pharmacies.name as pharmacy_name',
                 'products.barcode',
                 'products.company',
@@ -45,7 +47,7 @@ class ReverseTransfersExport implements FromCollection, WithHeadings, WithMappin
                 'reverse_transfer_items.standard_quantity_at_time',
                 'reverse_transfer_items.pharmacy_quantity_at_time',
             ])
-            ->orderByDesc('reverse_transfers.date')
+            ->orderByRaw(ReverseTransfer::MOVEMENT_DATE_SQL.' DESC')
             ->get();
     }
 

@@ -17,6 +17,7 @@
 
     .movement-forward { background: #eff6ff; color: #1d4ed8; border: 1px solid #dbeafe; }
     .movement-reverse { background: #f0fdf4; color: #15803d; border: 1px solid #dcfce7; }
+    .movement-inter { background: #faf5ff; color: #7e22ce; border: 1px solid #f3e8ff; }
 </style>
 @endpush
 
@@ -71,6 +72,8 @@
                                 <td>
                                     @if ($row->movement_type === 'forward')
                                         <span class="movement-pill movement-forward"><i class="fa-solid fa-arrow-left"></i> مناقلة</span>
+                                    @elseif ($row->movement_type === 'inter_pharmacy')
+                                        <span class="movement-pill movement-inter"><i class="fa-solid fa-right-left"></i> بين صيدليتين</span>
                                     @else
                                         <span class="movement-pill movement-reverse"><i class="fa-solid fa-arrow-right"></i> مناقلة عكسية</span>
                                     @endif

@@ -6,6 +6,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class PurchaseOrderItem extends Model
 {
+    /**
+     * 🩹 تاريخ "الاستلام" لتقارير المشتريات: وقت آخر استلام فعلي للسطر (received_at). سطر بلا استلام
+     * (عجز أُلغي كله) لا يملك received_at ⇒ آخر تحديث له (لحظة تسجيل الإلغاء). كانت التقارير تفلتر بـ
+     * updated_at وحده، فأي تعديل لاحق (كمية معتمدة، إلغاء المتبقي) كان ينقل السطر لفترة أخرى.
+     */
+    public const RECEIPT_DATE_SQL = 'DATE(COALESCE(purchase_order_items.received_at, purchase_order_items.updated_at))';
+
     protected $fillable = [
         'purchase_order_id', 'product_id', 'supplier_product_id',
         'suggested_qty', 'approved_qty', 'unit_cost', 'bonus_qty', 'line_total_cost',

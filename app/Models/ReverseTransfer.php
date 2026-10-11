@@ -9,6 +9,13 @@ use Illuminate\Database\Eloquent\Model;
 
 class ReverseTransfer extends Model
 {
+    /**
+     * 🩹 تاريخ "الحركة الفعلية" لمستند عكسي: يوم تنفيذه، لا يوم اقتراحه (date). مقترحة رُصدت يوماً ونُفِّذت
+     * بعده كانت تُنسَب ليوم الاقتراح بكل التقارير. السجلات السابقة لسير التنفيذ (ب.6) بلا executed_at
+     * وطُبِّق أثرها يوم تسجيلها ⇒ date. SQL صالح لـ MySQL وSQLite؛ يفترض وجود جدول reverse_transfers بالاستعلام.
+     */
+    public const MOVEMENT_DATE_SQL = 'COALESCE(DATE(reverse_transfers.executed_at), reverse_transfers.date)';
+
     // 🆕 (ب.6) status/origin/cycle/executed_* — راجع مايجريشن add_execution_workflow_to_transfers.
     protected $fillable = ['pharmacy_id', 'date', 'status', 'origin', 'cycle_import_log_id', 'executed_at', 'executed_by'];
 
@@ -58,6 +65,12 @@ class ReverseTransfer extends Model
         return $cycleImportLogId === null
             ? $query->whereNull('cycle_import_log_id')
             : $query->where('cycle_import_log_id', $cycleImportLogId);
+    }
+
+    /** يوم الحركة الفعلية (التنفيذ) — نفس قاعدة MOVEMENT_DATE_SQL للعرض. */
+    public function movementDate(): \Illuminate\Support\Carbon
+    {
+        return ($this->executed_at ?? \Illuminate\Support\Carbon::parse($this->date))->copy()->startOfDay();
     }
 
     public function isSuggested(): bool

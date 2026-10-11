@@ -15,6 +15,14 @@
 @endpush
 
 @section('content')
+    @if ($totals->unpriced_product_count > 0)
+        <div class="alert alert-warning small mb-3">
+            <i class="fa-solid fa-triangle-exclamation me-1"></i>
+            <strong>{{ number_format($totals->unpriced_product_count) }}</strong> مادة لها رصيد لكن بلا "سعر مادة" مسجَّل —
+            محسوبة بقيمة صفر، فالقيم أدناه أقل من الحقيقة بقدرها. السعر يُحدَّث من ملف الأصناف.
+        </div>
+    @endif
+
     <div class="d-flex gap-2 mb-3">
         <button type="button" class="report-toggle-btn active" data-view="table" onclick="switchReportView('table')">
             <i class="fa-solid fa-table-list me-1"></i> تفصيلي

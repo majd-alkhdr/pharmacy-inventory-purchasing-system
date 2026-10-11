@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\ReportFilterRequest;
 use App\Models\Pharmacy;
 use App\Services\Inventory\Reports\InventoryTurnoverReportService;
 use App\Services\Inventory\Reports\InventoryValueReportService;
@@ -37,16 +38,16 @@ class TransfersReportController extends Controller
         ]);
     }
 
-    public function transfersValue(Request $request)
+    public function transfersValue(ReportFilterRequest $request)
     {
         // 🎯 افتراضي معقول لتقرير إداري: الشهر الحالي حتى اليوم — لا "كل
         // البيانات منذ بداية النظام" افتراضياً (استعلام أثقل بلا داعٍ، وأقل
         // فائدة إدارية من نظرة سريعة على الفترة الحالية).
-        $dateFrom = $request->input('date_from', now()->startOfMonth()->toDateString());
-        $dateTo   = $request->input('date_to', now()->toDateString());
-        $pharmacyId = $request->input('pharmacy_id');
+        $dateFrom = $request->dateFrom(now()->startOfMonth()->toDateString());
+        $dateTo   = $request->dateTo(now()->toDateString());
+        $pharmacyId = $request->pharmacyId();
 
-        $report = $this->transfersValueReport->build($dateFrom, $dateTo, $pharmacyId ? (int) $pharmacyId : null);
+        $report = $this->transfersValueReport->build($dateFrom, $dateTo, $pharmacyId);
 
         return view('inventory.reports.transfers-value', [
             'rows'       => $report->rows,
@@ -57,13 +58,13 @@ class TransfersReportController extends Controller
         ]);
     }
 
-    public function shortageValue(Request $request)
+    public function shortageValue(ReportFilterRequest $request)
     {
-        $dateFrom = $request->input('date_from');
-        $dateTo   = $request->input('date_to');
-        $pharmacyId = $request->input('pharmacy_id');
+        $dateFrom = $request->dateFrom();
+        $dateTo   = $request->dateTo();
+        $pharmacyId = $request->pharmacyId();
 
-        $report = $this->shortageValueReport->build($dateFrom, $dateTo, $pharmacyId ? (int) $pharmacyId : null);
+        $report = $this->shortageValueReport->build($dateFrom, $dateTo, $pharmacyId);
 
         return view('inventory.reports.shortage-value', [
             'rows'       => $report->rows,

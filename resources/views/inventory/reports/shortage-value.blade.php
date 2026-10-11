@@ -10,6 +10,14 @@
 @endpush
 
 @section('content')
+    @if ($totals->unpriced_product_count > 0)
+        <div class="alert alert-warning small mb-3">
+            <i class="fa-solid fa-triangle-exclamation me-1"></i>
+            <strong>{{ number_format($totals->unpriced_product_count) }}</strong> مادة ناقصة بلا "سعر مادة" سارٍ بتاريخ آخر تحديث للنقص —
+            محسوبة بقيمة صفر، فالقيم أدناه أقل من الحقيقة بقدرها. السعر يُحدَّث من ملف الأصناف.
+        </div>
+    @endif
+
     <div class="filter-bar p-2.5 mb-3">
         <form method="GET" action="{{ route('inventory.reports.shortage-value') }}" class="row g-2 align-items-end">
             <div class="col-md-3">
