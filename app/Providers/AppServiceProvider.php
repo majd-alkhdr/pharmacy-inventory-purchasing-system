@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Services\Inventory\Import\Contracts\TabularFileReader;
+use App\Services\Inventory\Import\Readers\OpenSpoutTabularFileReader;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 
@@ -9,7 +11,9 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        // 🆕 قارئ الملفات المتدفق لكشف المستودعات. الواجهة (TabularFileReader) هي ما تعتمد عليه
+        // الخدمات؛ استبدال المكتبة لاحقاً (أو قارئ وهمي بالاختبارات) تعديل سطر واحد هنا.
+        $this->app->bind(TabularFileReader::class, OpenSpoutTabularFileReader::class);
     }
 
     public function boot(): void

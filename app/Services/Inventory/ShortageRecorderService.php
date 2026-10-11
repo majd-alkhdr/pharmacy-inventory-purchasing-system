@@ -2,12 +2,22 @@
 
 namespace App\Services\Inventory;
 
+use App\Enums\ShortageSource;
 use App\Enums\ShortageStatus;
 use App\Models\Shortage;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * 🎯 المسجِّل الوحيد لنواقص "المبيعات" (ShortageSource::Sales) تحديداً —
+ * وليس مسجِّلاً عاماً لأي نوع نقص. سلوكه (تجميع تراكمي + اعتماد آخر
+ * تاريخ) خاص بهذا المصدر تحديداً بقرار صريح من صاحب المشروع، بخلاف
+ * نواقص المخزون القياسي (تُستبدَل بالكامل لا تُجمَع — راجع
+ * ParLevelReplenishmentService). لهذا السبب لا يوجد معامل $source هنا:
+ * لو أُضيف، كان سيصبح استدعاءً واحداً دائماً بنفس القيمة، أي معامل
+ * زائد بلا فائدة حقيقية — التخصيص الصريح باسم الكلاس نفسه أوضح.
+ */
 class ShortageRecorderService
 {
     /**
@@ -50,7 +60,12 @@ class ShortageRecorderService
             $pharmacyIds = $aggregated->pluck('pharmacy_id')->unique()->values();
             $productIds  = $aggregated->pluck('product_id')->unique()->values();
 
+            // 🩹 مقيَّدة بالمصدر sales الآن — بلا هذا القيد، دفعة هجينة
+            // (Hybrid) كانت قد "تلتقط" نقصاً أنشأه ParLevelReplenishmentService
+            // لنفس الزوج بنفس الدفعة، وتجمع كميتها على قراءته الخاصة —
+            // خلط بين دلالتين مختلفتين تماماً لنفس الرقم.
             $existingPendingShortages = Shortage::pending()
+                ->where('source', ShortageSource::Sales)
                 ->whereIn('pharmacy_id', $pharmacyIds)
                 ->whereIn('product_id', $productIds)
                 ->lockForUpdate()
@@ -81,6 +96,7 @@ class ShortageRecorderService
                     'product_id'  => $row['product_id'],
                     'quantity'    => $row['quantity'],
                     'status'      => ShortageStatus::Pending->value,
+                    'source'      => ShortageSource::Sales->value,
                     'notes'       => $row['note'],
                     'created_at'  => $row['occurred_at'],
                     'updated_at'  => now(),

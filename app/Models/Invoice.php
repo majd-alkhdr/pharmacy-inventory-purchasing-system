@@ -3,19 +3,32 @@
 namespace App\Models;
 
 use App\Enums\InvoiceStatus;
+use App\Enums\ShortageSource;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class Invoice extends Model
 {
-    protected $fillable = ['pharmacy_id', 'date', 'status'];
+    // 🩹 [إصلاح] 'source' كان غائباً هنا رغم أن InvoiceGenerationService وParLevelReplenishmentService
+    // يمرّرانه بـ Invoice::create([...]). Laravel يتجاهل الحقول غير المسموحة بالتعبئة **بصمت**، فبقي
+    // invoices.source = NULL دائماً، وسقطت كل فاتورة بخانة "قديم" بكشف تجهيز الطلبيات
+    // (PreparationExport) بدل "من المبيعات" / "من المخزون القياسي".
+    protected $fillable = ['pharmacy_id', 'date', 'status', 'source', 'exported_at'];
 
     protected function casts(): array
     {
         return [
             'status' => InvoiceStatus::class,
             'date'   => 'date',
+            'source' => ShortageSource::class, // 🆕 NULL للفواتير القديمة (قبل تتبع المصدر) يبقى NULL
+            'exported_at' => 'datetime', // 🆕 (ب.2)
         ];
+    }
+
+    /** 🆕 (ب.2) التعديل متاح حتى أول تصدير فقط — راجع مايجريشن add_editing_columns_to_invoices. */
+    public function isEditable(): bool
+    {
+        return $this->exported_at === null;
     }
 
     public function pharmacy()

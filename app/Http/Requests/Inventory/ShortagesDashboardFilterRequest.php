@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Inventory;
 
+use App\Enums\ShortageSource;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class ShortagesDashboardFilterRequest extends FormRequest
 {
@@ -16,6 +18,7 @@ class ShortagesDashboardFilterRequest extends FormRequest
         return [
             'status'      => ['nullable', 'in:pending,fulfilled'],
             'pharmacy_id' => ['nullable', 'integer', 'exists:pharmacies,id'],
+            'source'      => ['nullable', Rule::in(array_column(ShortageSource::cases(), 'value'))], // 🆕
             'date_from'   => ['nullable', 'date'],
             'date_to'     => ['nullable', 'date', 'after_or_equal:date_from'],
         ];

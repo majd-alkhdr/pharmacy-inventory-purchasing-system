@@ -7,24 +7,26 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
- * 🎯 "طبقتا" الاستبعاد الآن (بعد إعادة هيكلة المشتريات):
+ * 🎯 طبقات الاستبعاد النهائية (بعد كل جولات إعادة الهيكلة):
  *
- *   1) قرب انتهاء الصلاحية (كما كانت أصلاً) — product_purchase_settings.is_stagnant
- *      المُحدَّث دورياً من StagnantProductDetectionService.
+ *   1) قرب انتهاء الصلاحية — is_stagnant (تلقائي، عبر StagnantProductDetectionService)
+ *   2) دوران بطيء جداً (> شهرين) — StockTurnoverClassifier::Stagnant
+ *   3) 🆕 "قيد التصفية" — is_clearance (يدوي، عبر ProductClearanceController)
  *
- *   2) دوران بطيء جداً (> شهرين) — StockTurnoverClassifier::Stagnant.
- *      سبب استبعاد *مستقل تماماً* عن السبب الأول ولا يتعارض معه.
+ * استثناء وحيد: نقص فعلي معلَّق بجدول shortages يتجاوز **الطبقة 2 فقط**
+ * (الركود المحسوب رياضياً).
  *
- * 🆕 نسخة مُحسَّنة أداءً (2026-08، الجولة الثانية): filterEligible() الآن
- * تستدعي StockTurnoverClassifier::classifyMany() (استعلامان بالمجمل لكل
- * المنتجات معاً)، بدل استدعاء isEligible() بحلقة (كان يعني استعلاماً
- * منفصلاً بالدوران لكل منتج على حدة — N+1 كلاسيكي). isEligible() المفردة
- * تبقى موجودة (بلا حذف) لفحص منتج واحد بمعزل عن غيره عند الحاجة.
+ * ⚠️ قرار تصميمي صريح بخصوص التصفية: الطبقة 3 **استبعاد مطلق** — تتجاوز
+ * حتى استثناء "نقص فعلي بالصيدليات" (بخلاف الركود العادي). التبرير: لو
+ * قرَّر المشرف صراحة "هذا الصنف قيد تصفية متعمَّدة"، هذا قرار عمل واعٍ
+ * يجب أن يبقى نافذاً بغض النظر عن أي إشارة أخرى — وإلا فقدت هذه الميزة
+ * غرضها الأساسي (إيقاف إعادة الطلب أثناء التصفية مهما كانت الظروف).
  */
 class PurchaseEligibilityFilter
 {
     public function __construct(
         private readonly StockTurnoverClassifier $turnoverClassifier,
+        private readonly PendingPharmacyShortageDetector $shortageDetector,
     ) {
     }
 
@@ -32,37 +34,48 @@ class PurchaseEligibilityFilter
     {
         return Product::query()
             ->whereDoesntHave('purchaseSetting', fn (Builder $q) => $q->where('is_stagnant', true));
+        // 🩹 لا نفلتر is_clearance هنا على مستوى SQL عمداً — clearance_until
+        // يحتاج مقارنة تاريخ ديناميكية (>=اليوم)، والفحص الدقيق (بما فيه
+        // معاملة NULL كـ"بلا انتهاء") أوضح وأقل عرضة للخطأ عبر
+        // Product::isInClearance() بطبقة PHP أدناه، على غرار طبقة الدوران.
     }
 
-    /** فحص شامل (الطبقتان معاً) لمنتج واحد — راجع تنبيه الأداء أعلاه */
     public function isEligible(Product $product): bool
     {
         if ($product->purchaseSetting?->is_stagnant ?? false) {
             return false;
         }
 
+        if ($product->isInClearance()) {
+            return false; // 🆕 استبعاد مطلق — لا استثناء حتى لو نقص فعلي معلَّق
+        }
+
+        if ($this->shortageDetector->hasPendingShortage($product->id)) {
+            return true;
+        }
+
         return !$this->turnoverClassifier->classify($product)->isExcludedFromPurchasing();
     }
 
     /**
-     * 🎯 نسخة مُحسَّنة أداءً لفحص مجموعة منتجات معاً — تُستخدم من
-     * PurchaseOrderGenerationService. تُرجع *فقط* المنتجات المؤهَّلة فعلياً
-     * بعد الطبقتين، مع خريطة تصنيف الدوران الكاملة (كي لا يُضطر المُستدعي
-     * لإعادة حسابها مرة أخرى لاحقاً لتحديد "دوران عالٍ" — استفادة كاملة
-     * من نفس استعلامي bulkCalculate الوحيدين).
-     *
      * @param Collection<int, Product> $products
      * @return array{eligible: Collection<int,Product>, turnoverStatuses: array<int,\App\Enums\TurnoverStatus>}
      */
     public function filterEligibleWithTurnover(Collection $products): array
     {
-        // الطبقة الأولى (قرب الصلاحية) بالفعل مُطبَّقة على مستوى SQL عبر
-        // eligibleProductsQuery() قبل الوصول هنا — لا تكرار لها.
         $turnoverStatuses = $this->turnoverClassifier->classifyMany($products);
 
-        $eligible = $products->filter(
-            fn (Product $p) => !$turnoverStatuses[$p->id]->isExcludedFromPurchasing()
-        )->values();
+        $eligible = $products->filter(function (Product $p) use ($turnoverStatuses) {
+            if ($p->isInClearance()) {
+                return false; // 🆕 يُفحَص أولاً، قبل أي استثناء آخر
+            }
+
+            if ($this->shortageDetector->hasPendingShortage($p->id)) {
+                return true;
+            }
+
+            return !$turnoverStatuses[$p->id]->isExcludedFromPurchasing();
+        })->values();
 
         return ['eligible' => $eligible, 'turnoverStatuses' => $turnoverStatuses];
     }

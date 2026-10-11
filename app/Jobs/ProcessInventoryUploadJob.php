@@ -19,17 +19,22 @@ class ProcessInventoryUploadJob implements ShouldQueue
 
     public function __construct(
         public string $sessionId,
-        public string $invPath,
-        public ?string $salesPath = null
+        // 🆕 (2026-09) أصبح اختيارياً — بوضع "بناءً على المبيعات" تحديداً
+        // يمكن عدم رفع ملف جرد مركزي جديد إطلاقاً، فيُستخدَم آخر رصيد
+        // مسجَّل بالفعل بلا أي محاولة تحديثه. راجع InventoryUploadService
+        // لمنطق التعامل الفعلي مع غيابه.
+        public ?string $invPath = null,
+        public ?string $salesPath = null,
+        // 🆕 كان ?string $pharmacyInvPath — أصبح مصفوفة لدعم عدة ملفات
+        // جرد صيدليات دفعة واحدة (راجع InventoryUploadService للدمج الفعلي)
+        public array $pharmacyInvPaths = [],
+        // 🆕 كشف المستودعات (المصفوفة) — يحل محل $invPath و$pharmacyInvPaths معاً.
+        public ?string $matrixPath = null,
     ) {}
 
-    // 🎯 التغيير الوحيد المطلوب هنا: type-hint الخدمة المتخصصة بدل الخدمة
-    // العملاقة القديمة. Laravel's Service Container يحلّ باقي الاعتماديات
-    // (CentralInventoryStockService, ShortageFulfillmentService,
-    // SalesMappingService, InvoiceGenerationService) تلقائياً.
     public function handle(InventoryUploadService $service): void
     {
-        $service->processInventoryUpload($this->sessionId, $this->invPath, $this->salesPath);
+        $service->processInventoryUpload($this->sessionId, $this->invPath, $this->salesPath, $this->pharmacyInvPaths, $this->matrixPath);
     }
 
     public function failed(\Throwable $e): void
@@ -38,5 +43,9 @@ class ProcessInventoryUploadJob implements ShouldQueue
             'status'  => 'failed',
             'message' => 'فشلت المعالجة في الخلفية: ' . $e->getMessage(),
         ]);
+
+        // 🆕 (أ.1) هذا المسار لا يمر بـ RecordsImportSession — فيُزامَن سجل الرفع صراحة.
+        app(\App\Services\Shared\ImportHistory\ImportHistoryService::class)
+            ->syncSessionStatus($this->sessionId, 'failed', 'فشلت المعالجة في الخلفية: ' . $e->getMessage());
     }
 }

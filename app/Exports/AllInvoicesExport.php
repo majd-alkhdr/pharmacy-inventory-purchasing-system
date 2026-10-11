@@ -36,13 +36,17 @@ class AllInvoicesExport implements FromCollection, WithHeadings, WithMapping, Sh
         if (!empty($this->filters['date'])) {
             $query->whereHas('invoice', fn($q) => $q->whereDate('date', $this->filters['date']));
         }
+        // 🆕
+        if (array_key_exists('redistributed_only', $this->filters) && $this->filters['redistributed_only']) {
+            $query->where('is_redistributed', true);
+        }
 
         return $query->get();
     }
 
     public function headings(): array
     {
-        return ['اسم الصيدلية', 'رقم المادة', 'الشركة المصنعة', 'اسم المادة', 'الكمية المشحونة', 'حالة المناقلة', 'رقم الفاتورة', 'نوع الفاتورة'];
+        return ['اسم الصيدلية', 'رقم المادة', 'الشركة المصنعة', 'اسم المادة', 'الكمية المشحونة', 'حالة المناقلة', 'رقم الفاتورة', 'نوع الفاتورة', 'مصدر التغطية']; // 🆕 عمود تاسع
     }
 
     public function map($item): array
@@ -60,22 +64,23 @@ class AllInvoicesExport implements FromCollection, WithHeadings, WithMapping, Sh
             $item->displayQty(),
             $item->availability()->label(),
             '#' . $item->invoice_id,
-            $item->invoice->status->label(), // 🎯 Enum بدل match() ثالث مكرر
+            $item->invoice->status->label(),
+            $item->is_redistributed // 🆕
+                ? '🔄 إعادة توزيع من: ' . implode('، ', $item->redistribution_sources ?? [])
+                : 'مستودع مركزي',
         ];
     }
 
     public function styles(Worksheet $sheet): array
     {
-        // 🐛 خطأ فعلي كان موجوداً بالكود الأصلي: العناوين 8 أعمدة (A→H) لكن
-        // التلوين كان يقتصر على A1:G1 (7 أعمدة فقط)، فكان عمود "نوع الفاتورة"
-        // يبقى بدون تلوين الهيدر الغامق. تم تصحيحه هنا إلى A1:H1.
-        $sheet->getStyle('A1:H1')->applyFromArray([
+        // 🩹 9 أعمدة الآن (A→I)، لا 8 — نفس فخّ النطاق الموثَّق أعلى هذا الملف أصلاً
+        $sheet->getStyle('A1:I1')->applyFromArray([
             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2D3748']],
             'font' => ['color' => ['argb' => 'FFFFFFFF'], 'bold' => true],
         ]);
 
         foreach ($this->shortageRows as $rowNum) {
-            $sheet->getStyle("A{$rowNum}:H{$rowNum}")->applyFromArray([
+            $sheet->getStyle("A{$rowNum}:I{$rowNum}")->applyFromArray([
                 'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFFDE8E8']],
                 'font' => ['color' => ['argb' => 'FFC53030']],
             ]);

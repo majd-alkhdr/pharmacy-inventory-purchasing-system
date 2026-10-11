@@ -8,7 +8,41 @@ use Illuminate\Database\Eloquent\Model;
 
 class InvoiceItem extends Model
 {
-    protected $fillable = ['invoice_id', 'product_id', 'requested_qty', 'supplied_qty', 'shortage_qty'];
+    protected $fillable = [
+        'invoice_id',
+        'product_id',
+        'requested_qty',
+        'supplied_qty',
+        'shortage_qty',
+        'is_redistributed',
+        'redistribution_sources', // 🆕
+        'system_supplied_qty',    // 🆕 (ب.2)
+        'is_manually_added',      // 🆕 (ب.2)
+    ];
+
+    protected $casts = [ // 🆕
+        'is_redistributed'       => 'boolean',
+        'redistribution_sources' => 'array',
+        'is_manually_added'      => 'boolean',
+    ];
+
+    /**
+     * 🆕 (ب.2) الكمية التي اقترحها النظام لهذا البند. NULL بالعمود = لم يُعدَّل البند قط،
+     * فالكمية الحالية نفسها هي الاقتراح. بند أُضيف يدوياً اقتراحه صفر.
+     */
+    public function systemQuantity(): int
+    {
+        if ($this->is_manually_added) {
+            return 0;
+        }
+
+        return (int) ($this->system_supplied_qty ?? $this->supplied_qty);
+    }
+
+    public function wasEdited(): bool
+    {
+        return $this->is_manually_added || ($this->system_supplied_qty !== null && (int) $this->system_supplied_qty !== (int) $this->supplied_qty);
+    }
 
     public function product()
     {

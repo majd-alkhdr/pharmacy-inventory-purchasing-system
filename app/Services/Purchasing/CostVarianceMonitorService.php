@@ -2,63 +2,64 @@
 
 namespace App\Services\Purchasing;
 
-use App\Models\ProductPurchasePrice;
+use App\Models\CentralInventoryPrice;
+use App\Models\Product;
+use App\Models\ProductPriceChange;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
 
 /**
- * 🎯 يطبّق نفس هدف النسخة السابقة (تنبيه بصري عند ارتفاع تكلفة مادة عن
- * آخر توريد لها)، لكن بمصدر بيانات مختلف تماماً بعد إعادة هيكلة المشتريات:
+ * 🎯 تنبيه بصري عند ارتفاع "سعر المادة" عن قيمته السابقة.
  *
- * ⚠️ التغيير الجوهري: النسخة القديمة كانت تقارن purchase_order_items.unit_cost
- * (المرتبط باستلام فعلي فعلي) — لكن بعد قرار "لا أسعار على مستوى السطر
- * بعد الآن" (unitCost = 0 دائماً بمحرك القرار الجديد)، هذا المصدر لم يعد
- * يحمل أي قيمة مفيدة. المصدر الجديد الموافَق عليه صراحة من صاحب المشروع:
- * "آخر سعر شراء" الذي يُضاف الآن كعمود بملف جرد المشتريات نفسه، ويُخزَّن
- * تاريخياً بجدول product_purchase_prices (راجع مايجريشن 2026_08_01_000003).
+ * 🆕 المصدر: سجل تغيّرات ملف الأصناف (product_price_changes) — لا product_purchase_prices
+ * (مفهوم "آخر سعر شراء" من ملف جرد المشتريات أُلغي بالكامل). لكل مادة لها تغيّر واحد على الأقل:
  *
- * الاستعلام أصبح أبسط بكثير من النسخة القديمة (كانت تحتاج subquery معقّد
- * عبر purchase_order_items+purchase_orders) لأن المصدر أصبح مباشراً.
+ *   السعر الحالي  = "سعر المادة" المخزَّن الآن (آخر سطر central_inventory_prices)
+ *   السعر السابق = old_price بآخر سطر تغيّر لهذه المادة (= القيمة قبل آخر تغيير مباشرة)
+ *
+ * يُعرض الارتفاع فقط — الانخفاض خبر جيد لا يحتاج تنبيهاً (نفس سلوك النسخة السابقة).
+ * ثلاثة استعلامات ثابتة مهما كان عدد المواد (لا N+1).
  */
 class CostVarianceMonitorService
 {
     /**
-     * @return Collection<int, object{product: \App\Models\Product, previous_price: float, current_price: float, variance_amount: float, variance_percent: float}>
+     * @return Collection<int, object{product: Product, previous_price: float, current_price: float, variance_amount: float, variance_percent: float}>
      */
     public function detectVariances(): Collection
     {
-        // 🎯 كل منتج له سطران على الأقل بجدول أسعار الشراء التاريخي —
-        // استعلام واحد يجلب أحدث سعرين لكل منتج معاً (بدل حلقة N+1).
-        $productIds = ProductPurchasePrice::query()
-            ->select('product_id')
+        $latestChangeIds = ProductPriceChange::query()
+            ->selectRaw('MAX(id) as id')
             ->groupBy('product_id')
-            ->havingRaw('COUNT(*) >= 2')
-            ->pluck('product_id');
+            ->pluck('id');
 
-        if ($productIds->isEmpty()) {
+        if ($latestChangeIds->isEmpty()) {
             return collect();
         }
 
-        return $productIds->map(function (int $productId) {
-            $current = ProductPurchasePrice::latestFor($productId);
-            $previous = ProductPurchasePrice::previousFor($productId);
+        $previousByProduct = ProductPriceChange::whereIn('id', $latestChangeIds)
+            ->pluck('old_price', 'product_id')
+            ->map(fn ($price) => (float) $price);
 
-            if ($current === null || $previous === null || $current <= $previous) {
-                return null; // 🎯 نُظهر فقط الارتفاع — انخفاض السعر خبر جيد، لا يحتاج تنبيهاً
-            }
+        $currentByProduct = CentralInventoryPrice::latestForMany($previousByProduct->keys()->all());
+        $products = Product::whereIn('id', $previousByProduct->keys())->get()->keyBy('id');
 
-            $product = \App\Models\Product::find($productId);
+        return $previousByProduct
+            ->map(function (float $previous, int $productId) use ($currentByProduct, $products) {
+                $current = $currentByProduct[$productId] ?? null;
 
-            return (object) [
-                'product'          => $product,
-                'previous_price'   => $previous,
-                'current_price'     => $current,
-                'variance_amount'  => round($current - $previous, 2),
-                'variance_percent' => round((($current - $previous) / $previous) * 100, 1),
-            ];
-        })
-        ->filter()
-        ->sortByDesc('variance_percent')
-        ->values();
+                if ($current === null || $previous <= 0 || $current <= $previous || !$products->has($productId)) {
+                    return null;
+                }
+
+                return (object) [
+                    'product'          => $products->get($productId),
+                    'previous_price'   => $previous,
+                    'current_price'    => $current,
+                    'variance_amount'  => round($current - $previous, 2),
+                    'variance_percent' => round((($current - $previous) / $previous) * 100, 1),
+                ];
+            })
+            ->filter()
+            ->sortByDesc('variance_percent')
+            ->values();
     }
 }

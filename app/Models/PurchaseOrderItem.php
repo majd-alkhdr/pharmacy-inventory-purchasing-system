@@ -11,7 +11,7 @@ class PurchaseOrderItem extends Model
         'suggested_qty', 'approved_qty', 'unit_cost', 'bonus_qty', 'line_total_cost',
         'is_target_item', 'is_market_shortage', 'is_over_budget_exception', 'priority_rank',
         'explanation_summary', 'explanation_factors',
-        'ordered_qty', 'received_qty',
+        'ordered_qty', 'received_qty', 'received_at', 'cancelled_qty', 'receiving_note',
     ];
 
     protected function casts(): array
@@ -22,7 +22,8 @@ class PurchaseOrderItem extends Model
             'is_target_item'            => 'boolean',
             'is_market_shortage'        => 'boolean',
             'is_over_budget_exception'  => 'boolean',
-            'explanation_factors'       => 'array', // 🎯 JSON ↔ array PHP تلقائياً
+            'explanation_factors'       => 'array',
+            'received_at'               => 'datetime', // 🆕 وقت آخر استلام فعلي — مصدر products.last_purchase_date
         ];
     }
 
@@ -46,13 +47,11 @@ class PurchaseOrderItem extends Model
         return $this->hasMany(InventoryBatch::class);
     }
 
-    /** الكمية الفعلية النهائية = ما اعتمده المشرف، أو المقترح تلقائياً إن لم يُعدّله أحد */
     public function finalQuantity(): int
     {
         return $this->approved_qty ?? $this->suggested_qty;
     }
 
-    /** 🎯 يخدم مباشرة منطق "قنص نواقص السوق" بعد مطابقة الاستلام الفعلي */
     public function receivingShortfall(): int
     {
         return max(0, ($this->ordered_qty ?? $this->finalQuantity()) - $this->received_qty);
@@ -64,19 +63,30 @@ class PurchaseOrderItem extends Model
     }
 
     /**
-     * 🎯 الكمية المتبقية "قيد الطريق" لهذا السطر — طُلبت لكن لم تُستلَم
-     * بعد بالكامل. تُستخدم من OpenPurchaseOrderQuantityService لخصمها من
-     * احتياج أي فاتورة مستقبلية لنفس المادة (تطبيق مباشر لـ"فحص الطلبيات
-     * قيد التوريد" الموصوف بقسم 3 من مستندك — منع الازدواجية بالطلب).
+     * 🆕 إصلاح جوهري (2026-08، بمناسبة سيناريو "التدقيق اليدوي" الجديد):
+     * الكمية "قيد الطريق" الآن تستثني صراحة أي جزء سبق تسجيله كـ
+     * cancelled_qty — بغض النظر عن حالة الفاتورة نفسها (Draft، PartiallyReceived،
+     * إلخ). هذا يطبّق مباشرة طلب صاحب المشروع: "الكمية غير المستلَمة يجب
+     * أن تعود للاحتياج عند توليد فواتير شراء جديدة" — بمجرد تسجيلها
+     * كملغاة (سواء عبر "إلغاء المتبقي" اليدوي القديم، أو عبر اختيار
+     * "عدم استلام"/"استلام جزئي" بشاشة التدقيق اليدوي الجديدة)، تتوقف
+     * فوراً عن اعتبارها "قادمة قريباً" بمعادلة DemandCalculationService،
+     * فيرتفع الاحتياج المحسوب تلقائياً بالفاتورة التالية ليغطيها من جديد.
      *
-     * لو لم تُرسَل الفاتورة للمورد بعد (ordered_qty لا يزال NULL)، نعتبر
-     * الكمية المعتمَدة (أو المقترحة إن لم تُعتمَد بعد) بالكامل "قيد الطريق"
-     * افتراضياً — لأنها ستُطلب فعلياً قريباً.
+     * قبل هذا الإصلاح: كانت تعتمد فقط على استبعاد الفاتورة كلها بحالة
+     * PartiallyCancelled عبر OpenPurchaseOrderQuantityService — وهذا كان
+     * يعمل فقط لو أُلغيت الفاتورة بالكامل، وليس على مستوى سطر واحد ضمن
+     * فاتورة لا تزال "قيد الاستلام الجزئي" بحالتها العامة.
      */
     public function outstandingQuantity(): int
     {
         $orderedOrPlanned = $this->ordered_qty ?? $this->finalQuantity();
 
-        return max(0, $orderedOrPlanned - $this->received_qty);
+        return max(0, $orderedOrPlanned - $this->received_qty - $this->cancelled_qty);
+    }
+
+    public function hasCancelledQuantity(): bool
+    {
+        return $this->cancelled_qty > 0;
     }
 }

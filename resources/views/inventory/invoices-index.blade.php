@@ -13,8 +13,7 @@
     <div class="surface-card p-4 shadow-sm">
 
         {{-- 🔍 فورم الفلترة والبحث المتقدم --}}
-        <form method="GET" action="{{ route('inventory.invoices.index') }}" class="p-3 mb-4 rounded-2"
-            style="background-color: var(--c-bg); border: 1px solid var(--c-border);">
+        <form method="GET" action="{{ route('inventory.invoices.index') }}" class="p-3 mb-4 rounded-2 filter-bar">
             <div class="row g-2.5 align-items-end">
 
                 {{-- 🆕 فلتر التاريخ — افتراضياً تاريخ اليوم --}}
@@ -60,6 +59,19 @@
                         class="btn btn-outline-secondary btn-sm rounded-2 w-100 fw-medium">
                         تصفية اليوم فقط
                     </a>
+                    {{-- 🆕 كشف تجهيز — مُجمَّع بمستوى (صيدلية+مادة)، بلا تكرار
+                         حتى لو نفس الصنف ورد بأكثر من فاتورة (مبيعات + مخزون
+                         قياسي معاً بالوضع الهجين مثلاً). يشارك نفس فلتر
+                         التاريخ والصيدلية المعروضين حالياً بالشاشة. --}}
+                    {{-- 🩹 [إصلاح] كانت تُمرِّر date وpharmacy_id فقط — تتجاهل status
+                         وavailability المختارين فعلياً بالشاشة (المستخدم يرى
+                         جدولاً مُصفَّى، لكن الكشف المُصدَّر كان يتجاهل الفلترة
+                         تماماً). الآن نفس الأربعة المُمرَّرة لزر "تصدير Excel" المجاور تماماً. --}}
+                    <a href="{{ route('inventory.invoices.export-preparation', array_filter(['date' => $currentDate, 'pharmacy_id' => request('pharmacy_id'), 'status' => request('status'), 'availability' => request('availability')])) }}"
+                        class="btn btn-outline-primary btn-sm rounded-2 w-100 fw-medium text-nowrap"
+                        title="رقم واحد لكل صنف لكل صيدلية — لا تكرار حتى لو ورد الصنف بأكثر من فاتورة">
+                        <i class="fa-solid fa-clipboard-list me-1"></i> كشف تجهيز
+                    </a>
                     {{-- 🆕 ندمج التاريخ الحالي (المعروض فعلياً بالشاشة) مع باقي الفلاتر عند بناء رابط التصدير --}}
                     <a href="{{ route('inventory.invoices.export-all', array_merge(request()->only('status', 'pharmacy_id', 'availability'), ['date' => $currentDate])) }}"
                         class="btn btn-success btn-sm rounded-2 w-100 fw-medium text-nowrap">
@@ -72,6 +84,8 @@
                 <i class="fa-solid fa-circle-info me-1"></i>
                 الفلترة والتصدير مقتصران افتراضياً على تاريخ
                 <strong>{{ \Carbon\Carbon::parse($currentDate)->format('Y-m-d') }}</strong> فقط.
+                "كشف تجهيز" يُجمِّع كل فواتير هذا اليوم بمستوى (صيدلية + مادة) في رقم واحد لكل صنف —
+                استخدمه للتحضير الفعلي بدل "تصدير Excel" الذي يبقى سجلاً كاملاً بمستوى الفاتورة الواحدة.
             </div>
         </form>
 

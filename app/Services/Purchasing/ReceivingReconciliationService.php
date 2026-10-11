@@ -27,6 +27,7 @@ class ReceivingReconciliationService
 {
     public function __construct(
         private readonly MarketShortageDetectionService $marketShortageDetection,
+        private readonly LastPurchaseDateSynchronizer $lastPurchaseDate = new LastPurchaseDateSynchronizer(),
     ) {
     }
 
@@ -46,6 +47,8 @@ class ReceivingReconciliationService
         $stats = ['processed_items' => 0, 'total_received_qty' => 0, 'new_batches' => 0];
 
         DB::transaction(function () use ($receiptsByItem, $orderIsFinalized, $sessionId, &$stats) {
+            $receivedProductIds = [];
+
             foreach ($receiptsByItem as $itemId => $rows) {
                 $item = PurchaseOrderItem::findOrFail($itemId);
 
@@ -53,7 +56,9 @@ class ReceivingReconciliationService
                     $stats['total_received_qty'] += $row->received_qty;
                 }
 
-                $item->increment('received_qty', $rows->sum('received_qty'));
+                $receivedNow = (int) $rows->sum('received_qty');
+                $item->increment('received_qty', $receivedNow, $receivedNow > 0 ? ['received_at' => now()] : []);
+                $receivedProductIds[] = $item->product_id;
 
                 if ($item->ordered_qty === null) {
                     $item->update(['ordered_qty' => $item->finalQuantity()]);
@@ -65,6 +70,9 @@ class ReceivingReconciliationService
             }
 
             $this->syncOrderStatus($receiptsByItem, $orderIsFinalized);
+
+            // 🆕 last_purchase_date يُشتَق من الاستلام الفعلي، داخل نفس المعاملة.
+            $this->lastPurchaseDate->syncFor($receivedProductIds);
 
             TemporaryPurchaseReceipt::forSession($sessionId)->delete();
         });

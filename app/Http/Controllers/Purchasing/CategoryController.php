@@ -10,13 +10,18 @@ use App\Imports\CategoriesMasterImport;
 use App\Imports\CategoryProductLinksImport;
 use App\Models\Category;
 use App\Models\PendingCategoryLink;
+use App\Enums\ImportFileType;
+use App\Models\ImportLog;
 use App\Services\Purchasing\CategoryImportService;
+use App\Services\Shared\ImportHistory\ImportHistoryService;
+use App\Services\Shared\ImportHistory\ImportStats;
 use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Facades\Excel;
 
 class CategoryController extends Controller
 {
     public function __construct(
+        private readonly ImportHistoryService $importHistory, // 🆕 (أ.1)
         private readonly CategoryImportService $importService,
     ) {
     }
@@ -34,11 +39,16 @@ class CategoryController extends Controller
     {
         $filePath = $request->file('categories_file')->store('imports');
 
-        $import = new CategoriesMasterImport();
-        Excel::import($import, Storage::path($filePath));
-        Storage::delete($filePath);
+        $created = $this->importHistory->track(ImportFileType::CategoriesMaster, $request->file('categories_file'), function (ImportLog $log) use ($filePath) {
+            $import = new CategoriesMasterImport();
+            Excel::import($import, Storage::path($filePath));
+            Storage::delete($filePath);
 
-        $created = $this->importService->importMasterList($import->names);
+            $created = $this->importService->importMasterList($import->names);
+            $this->importHistory->complete($log, ImportStats::fromCounts(count($import->names)));
+
+            return $created;
+        });
 
         return back()->with('success', "✅ تم إضافة {$created} تصنيف جديد لقائمة التصنيفات الرسمية (الإجمالي الآن: " . Category::count() . ').');
     }
@@ -49,16 +59,29 @@ class CategoryController extends Controller
         $sessionId = uniqid('category_link_session_');
         $filePath = $request->file('links_file')->store('imports');
 
-        $import = new CategoryProductLinksImport();
-        Excel::import($import, Storage::path($filePath));
-        Storage::delete($filePath);
+        return $this->importHistory->track(ImportFileType::CategoryLinks, $request->file('links_file'), function (ImportLog $log) use ($filePath, $sessionId) {
+            $import = new CategoryProductLinksImport();
+            Excel::import($import, Storage::path($filePath));
+            Storage::delete($filePath);
 
-        if ($import->rows->isEmpty()) {
-            return back()->with('error', 'الملف فارغ أو لا يحتوي على بيانات صالحة.');
-        }
+            if ($import->rows->isEmpty()) {
+                $this->importHistory->fail($log, 'الملف فارغ أو لا يحتوي على بيانات صالحة.');
 
-        $result = $this->importService->importLinks($sessionId, $import->rows);
+                return back()->with('error', 'الملف فارغ أو لا يحتوي على بيانات صالحة.');
+            }
 
+            $result = $this->importService->importLinks($sessionId, $import->rows);
+            $this->importHistory->complete($log, ImportStats::fromCounts(
+                $result['linked'],
+                $result['unmatched_products']->count() + $result['pending_links'],
+            ));
+
+            return $this->linksResultView($result, $sessionId);
+        });
+    }
+
+    private function linksResultView(array $result, string $sessionId)
+    {
         return view('purchasing.categories-import-result', ['result' => $result, 'sessionId' => $sessionId]);
     }
 

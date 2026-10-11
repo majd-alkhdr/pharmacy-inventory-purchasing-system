@@ -4,6 +4,11 @@
 @section('page_subtitle', 'المشتريات')
 
 @section('topbar_actions')
+    {{-- 🆕 يحترم الفلاتر الحالية بالصفحة (الحالة/المورد) — نفس نمط تصدير
+         فواتير المناقلات (invoices-index.blade.php) بالضبط --}}
+    <a href="{{ route('purchasing.orders.export-all', request()->only('status', 'supplier_id')) }}" class="btn btn-success btn-sm rounded-2 px-3">
+        <i class="fa-solid fa-file-excel fa-xs me-1"></i> تصدير Excel
+    </a>
     <a href="{{ route('purchasing.orders.create') }}" class="btn btn-brand btn-sm rounded-2 px-3">
         <i class="fa-solid fa-wand-magic-sparkles fa-xs me-1"></i> توليد فواتير جديدة
     </a>
@@ -12,7 +17,6 @@
 @section('content')
 <div class="surface-card p-4 shadow-sm">
 
-    {{-- فلترة سريعة --}}
     <form method="GET" class="row g-2 mb-3 align-items-end">
         <div class="col-md-3">
             <label class="form-label small fw-bold text-secondary mb-1">الحالة</label>
@@ -76,6 +80,10 @@
                             <td class="text-center">
                                 <a href="{{ route('purchasing.orders.show', $order->id) }}" class="btn btn-outline-primary btn-sm rounded-2 px-2.5 fw-medium">
                                     عرض التفاصيل
+                                </a>
+                                {{-- 🆕 تصدير سريع لفاتورة واحدة مباشرة من صف الجدول --}}
+                                <a href="{{ route('purchasing.orders.export-excel', $order->id) }}" class="btn btn-outline-success btn-sm rounded-2 px-2" title="تصدير Excel">
+                                    <i class="fa-solid fa-file-excel"></i>
                                 </a>
                             </td>
                         </tr>

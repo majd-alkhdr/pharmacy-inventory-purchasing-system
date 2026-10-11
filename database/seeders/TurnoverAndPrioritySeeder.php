@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Models\CentralInventory;
 use App\Models\Invoice;
-use App\Models\InventoryBatch;
 use App\Models\InvoiceItem;
 use App\Models\Pharmacy;
 use App\Models\Product;
@@ -61,12 +60,6 @@ class TurnoverAndPrioritySeeder extends Seeder
         };
 
         $addStockBatch = function (Product $product, int $qty) {
-            InventoryBatch::create([
-                'product_id'   => $product->id,
-                'quantity'      => $qty,
-                'received_at'   => now()->toDateString(),
-                'source'         => 'purchase_inventory_upload',
-            ]);
             CentralInventory::updateOrCreate(['product_id' => $product->id], ['quantity' => $qty]);
         };
 

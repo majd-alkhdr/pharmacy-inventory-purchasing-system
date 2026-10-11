@@ -20,30 +20,20 @@ class ShortagesExport implements FromCollection, WithHeadings, WithMapping, Shou
         $this->filters = $filters;
     }
 
+    /**
+     * 🩹 [مُصحَّحة 2026-09] كانت تُعيد بناء نفس شروط WHERE الموجودة أصلاً
+     * بـ Shortage::scopeFilter() يدوياً هنا — نسخة ثانية منفصلة لنفس
+     * المنطق بالضبط. الخطر: أي تعديل مستقبلي على تعريف الفلترة (كإضافة
+     * source اليوم) كان يُنسى تحديثه بأحد المكانين، فيختلف الجدول عن
+     * التصدير بصمت بلا أي رسالة خطأ تُنبِّه لذلك. الآن كلاهما (لوحة
+     * التحكم + هذا التصدير) يستدعيان نفس الـ scope الواحد بالضبط.
+     */
     public function collection()
     {
-        $query = Shortage::with(['pharmacy', 'product'])
-            ->orderBy('created_at', 'asc');
-
-        if (!empty($this->filters['status'])) {
-            $query->where('status', $this->filters['status']);
-        } else {
-            $query->where('status', 'pending');
-        }
-
-        if (!empty($this->filters['pharmacy_id'])) {
-            $query->where('pharmacy_id', $this->filters['pharmacy_id']);
-        }
-
-        if (!empty($this->filters['date_from'])) {
-            $query->whereDate('created_at', '>=', $this->filters['date_from']);
-        }
-
-        if (!empty($this->filters['date_to'])) {
-            $query->whereDate('created_at', '<=', $this->filters['date_to']);
-        }
-
-        return $query->get();
+        return Shortage::filter($this->filters)
+            ->with(['pharmacy', 'product'])
+            ->orderBy('created_at', 'asc')
+            ->get();
     }
 
     public function headings(): array
@@ -54,6 +44,7 @@ class ShortagesExport implements FromCollection, WithHeadings, WithMapping, Shou
             'الشركة المصنعة',
             'اسم المادة',
             'الكمية الناقصة',
+            'المصدر', // 🆕
             'تاريخ تسجيل النقص',
             'الحالة',
             'ملاحظات',
@@ -68,12 +59,9 @@ class ShortagesExport implements FromCollection, WithHeadings, WithMapping, Shou
             $shortage->product->company,
             $shortage->product->name,
             $shortage->quantity,
+            // 🆕 نفس منطق status->label() تماماً — Enum Cast، لا نص حر
+            $shortage->source->label(),
             $shortage->created_at->format('Y-m-d'),
-            // 🩹 إصلاح: بعد إضافة Enum Cast على عمود status بموديل Shortage،
-            // $shortage->status لم يعد نصاً (string) بل صار كائن ShortageStatus.
-            // المقارنة القديمة "=== 'pending'" أصبحت تُرجع false دائماً (كائن لا
-            // يساوي نصاً بمقارنة صارمة ===)، فكانت كل الصفوف تُصدَّر "محلول ✅"
-            // حتى لو كانت فعلياً معلّقة. الحل: استخدام label() الجاهزة بالـ Enum.
             $shortage->status->label(),
             $shortage->notes ?? '-',
         ];
@@ -81,10 +69,10 @@ class ShortagesExport implements FromCollection, WithHeadings, WithMapping, Shou
 
     public function styles(Worksheet $sheet): array
     {
-        // 🩹 نفس خطأ نطاق التلوين الذي كان بـ AllInvoicesExport: العناوين هنا
-        // 8 أعمدة (A→H) لكن التلوين كان يقتصر على A1:G1 (7 أعمدة)، فعمود
-        // "ملاحظات" (H) كان يبقى بدون تلوين الهيدر الغامق. تم تصحيحه لـ A1:H1.
-        $sheet->getStyle('A1:H1')->applyFromArray([
+        // 🩹 عمود جديد (المصدر) أضاف عموداً كاملاً — 9 أعمدة الآن (A→I)
+        // بدل 8 (A→H). نفس خطأ نطاق التلوين السابق كان سيتكرر هنا بالضبط
+        // لو لم يُحدَّث هذا السطر أيضاً.
+        $sheet->getStyle('A1:I1')->applyFromArray([
             'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF2D3748']],
             'font' => ['color' => ['argb' => 'FFFFFFFF'], 'bold' => true],
         ]);

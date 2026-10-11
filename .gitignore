@@ -27,3 +27,5 @@ Thumbs.db
 !/storage/app/private/.gitignore
 /storage/app/public/*
 !/storage/app/public/.gitignore
+# Windows Explorer metadata
+desktop.ini

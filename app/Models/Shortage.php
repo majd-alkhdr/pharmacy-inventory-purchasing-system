@@ -2,18 +2,20 @@
 
 namespace App\Models;
 
+use App\Enums\ShortageSource;
 use App\Enums\ShortageStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 
 class Shortage extends Model
 {
-    protected $fillable = ['pharmacy_id', 'product_id', 'quantity', 'status', 'notes'];
+    protected $fillable = ['pharmacy_id', 'product_id', 'quantity', 'status', 'source', 'notes'];
 
     protected function casts(): array
     {
         return [
             'status' => ShortageStatus::class, // ✅ بدل النص الحر
+            'source' => ShortageSource::class, // 🆕
         ];
     }
 
@@ -55,11 +57,17 @@ class Shortage extends Model
         return $date ? $query->whereDate('created_at', '<=', $date) : $query;
     }
 
+    /** 🆕 راجع ShortageSource للتفاصيل — sales أو standard_inventory */
+    public function scopeSource(Builder $query, ?string $source): Builder
+    {
+        return $source ? $query->where('source', $source) : $query;
+    }
+
     /**
      * 🎯 هذا الـ scope يستبدل buildShortagesFilterQuery() بالكامل.
      * بدل ما الكونترولر يبني شروط WHERE يدوياً، هو بس يمرر مصفوفة الفلاتر.
      *
-     * @param array{status?:string,pharmacy_id?:int,date_from?:string,date_to?:string} $filters
+     * @param array{status?:string,pharmacy_id?:int,source?:string,date_from?:string,date_to?:string} $filters
      */
     public function scopeFilter(Builder $query, array $filters): Builder
     {
@@ -70,6 +78,7 @@ class Shortage extends Model
                 fn(Builder $q) => $q->pending() // الافتراضي: المعلقة فقط (نفس السلوك الأصلي)
             )
             ->forPharmacy($filters['pharmacy_id'] ?? null)
+            ->source($filters['source'] ?? null) // 🆕
             ->createdFrom($filters['date_from'] ?? null)
             ->createdTo($filters['date_to'] ?? null);
     }

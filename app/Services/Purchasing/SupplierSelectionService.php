@@ -20,7 +20,11 @@ class SupplierSelectionService
      * @param array<string,int> $sessionOverrides [company_name => supplier_id]
      *        القيم التي اختارها المشرف يدوياً بشاشة حل التعارض لهذه الدفعة فقط.
      */
-    public function resolveFor(Product $product, array $sessionOverrides = []): SupplierSelectionResult
+    /**
+     * @param list<int> $restrictToSupplierIds 🆕 (ج.1) حصر المرشحين بالموردين الذين اختارهم المستخدم
+     *        (أي من استراتيجيتي النطاق). فارغة = كل الموردين (السلوك القديم حرفياً).
+     */
+    public function resolveFor(Product $product, array $sessionOverrides = [], array $restrictToSupplierIds = []): SupplierSelectionResult
     {
         $company = $product->company;
 
@@ -30,6 +34,10 @@ class SupplierSelectionService
 
         $candidates = SupplierCompany::suppliersForCompany($company);
 
+        if ($restrictToSupplierIds !== []) {
+            $candidates = $candidates->filter(fn ($s) => in_array((int) $s->id, $restrictToSupplierIds, true))->values();
+        }
+
         if ($candidates->isEmpty()) {
             return SupplierSelectionResult::none();
         }
@@ -38,8 +46,10 @@ class SupplierSelectionService
             return SupplierSelectionResult::resolved($candidates->first()->id);
         }
 
-        // 🎯 تعارض فعلي: أكثر من مورد لنفس الشركة
-        if (isset($sessionOverrides[$company])) {
+        // 🎯 تعارض فعلي: أكثر من مورد لنفس الشركة.
+        // 🩹 (ج.1) الاختيار اليدوي يُقبل فقط إن كان ضمن المرشحين الحاليين — اختيار محفوظ بالجلسة
+        // من توليد سابق بنطاق مختلف لا يجوز أن يُسند المادة لمورد خارج نطاق هذا التوليد.
+        if (isset($sessionOverrides[$company]) && $candidates->contains('id', (int) $sessionOverrides[$company])) {
             return SupplierSelectionResult::resolved((int) $sessionOverrides[$company]);
         }
 

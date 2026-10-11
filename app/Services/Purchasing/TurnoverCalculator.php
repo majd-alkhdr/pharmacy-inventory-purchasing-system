@@ -3,8 +3,8 @@
 namespace App\Services\Purchasing;
 
 use App\Enums\InvoiceStatus;
-use App\Models\InventoryBatch;
 use App\Models\Product;
+use App\Services\Shared\Stock\CentralStockReader;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -41,6 +41,15 @@ class TurnoverCalculator
     private const LOOKBACK_SAFETY_DAYS = 180; // 🆕 نافذة أمان المسار المُحسَّن فقط
 
     /**
+     * 🆕 "الرصيد الحالي" بالمعادلة = رصيد المستودع المركزي من ملف المصفوفة (لا inventory_batches
+     * من ملف جرد المشتريات الملغى) — المساران (المفرد والمُجمَّع) يقرآن نفس المصدر عبر نفس القارئ.
+     */
+    public function __construct(
+        private readonly CentralStockReader $centralStock = new CentralStockReader(),
+    ) {
+    }
+
+    /**
      * 🎯 الحساب الدقيق لمنتج واحد — بلا حدود زمنية (يبحث حتى يجد آخر 7
      * تواريخ بيع فعلية، مهما بَعُد تاريخها). يُستخدم خارج سياق "فحص
      * مجموعة كبيرة من المنتجات معاً" حيث السرعة ليست القيد الحرِج.
@@ -53,7 +62,7 @@ class TurnoverCalculator
     {
         $weeklySales = $this->weeklySalesFor($product->id);
 
-        return $this->resolveFromWeeklySales($product, $weeklySales, $product->usableStockQuantity());
+        return $this->resolveFromWeeklySales($product, $weeklySales, $this->centralStock->quantityFor($product->id));
     }
 
     /**
@@ -84,13 +93,9 @@ class TurnoverCalculator
             ->get()
             ->groupBy('product_id');
 
-        // ══ استعلام واحد: الرصيد الحالي (usable) لكل المنتجات معاً. ══
-        $stockByProduct = InventoryBatch::query()
-            ->usable()
-            ->whereIn('product_id', $productIds)
-            ->select('product_id', DB::raw('SUM(quantity) as qty'))
-            ->groupBy('product_id')
-            ->pluck('qty', 'product_id');
+        // ══ استعلام واحد: رصيد المستودع المركزي (ملف المصفوفة) لكل المنتجات معاً. ══
+        $stockByProduct = $this->centralStock->quantitiesFor($productIds);
+
 
         $result = [];
 

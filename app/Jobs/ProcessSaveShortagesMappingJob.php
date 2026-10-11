@@ -39,5 +39,9 @@ class ProcessSaveShortagesMappingJob implements ShouldQueue
             'status'  => 'failed',
             'message' => 'فشلت عملية حفظ المطابقة: ' . $e->getMessage(),
         ]);
+
+        // 🆕 (أ.1) هذا المسار لا يمر بـ RecordsImportSession — فيُزامَن سجل الرفع صراحة.
+        app(\App\Services\Shared\ImportHistory\ImportHistoryService::class)
+            ->syncSessionStatus($this->sessionId, 'failed', 'فشلت عملية حفظ المطابقة: ' . $e->getMessage());
     }
 }

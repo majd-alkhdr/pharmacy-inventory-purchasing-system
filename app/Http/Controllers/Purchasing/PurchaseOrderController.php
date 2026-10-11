@@ -3,32 +3,39 @@
 namespace App\Http\Controllers\Purchasing;
 
 use App\Enums\PurchaseOrderStatus;
+use App\Exports\AllPurchaseOrdersExport;
+use App\Exports\PurchaseOrderExport;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Purchasing\ApprovePurchaseOrderRequest;
 use App\Http\Requests\Purchasing\CancelPurchaseOrderRequest;
 use App\Http\Requests\Purchasing\GeneratePurchaseOrdersRequest;
+use App\Http\Requests\Purchasing\UpdatePurchaseOrderItemsRequest;
 use App\Models\PurchaseOrder;
 use App\Models\Supplier;
 use App\Models\SupplierCompany;
 use App\Services\Purchasing\PurchaseOrderCancellationService;
+use App\Services\Purchasing\PurchaseOrderEditingService;
 use App\Services\Purchasing\PurchaseOrderGenerationService;
 use Illuminate\Http\Request;
+use Maatwebsite\Excel\Facades\Excel;
 
 class PurchaseOrderController extends Controller
 {
     public function __construct(
         private readonly PurchaseOrderGenerationService $generationService,
         private readonly PurchaseOrderCancellationService $cancellationService,
-    ) {
-    }
+        private readonly PurchaseOrderEditingService $editingService,
+        private readonly \App\Services\Inventory\Surplus\InventoryCycleResolver $cycleResolver, // 🆕 (ج.3)
+    ) {}
 
     public function create()
     {
         return view('purchasing.generate', [
-            // 🆕 لا خيار سيناريو بعد اليوم — راجع generate.blade.php المعدَّلة
             'suppliers'      => Supplier::active()->orderBy('name')->get(),
             'lockedSupplierIds' => PurchaseOrder::where('status', PurchaseOrderStatus::Draft->value)
                 ->pluck('supplier_id')->unique(),
+            // 🆕 (ج.1) الشركات المرتبطة بمورد واحد على الأقل — مدخل استراتيجية "اختيار شركة".
+            'companies'      => SupplierCompany::query()->distinct()->orderBy('company_name')->pluck('company_name'),
         ]);
     }
 
@@ -36,9 +43,6 @@ class PurchaseOrderController extends Controller
     {
         $result = $this->generationService->generate($request->toParams());
 
-        // 🆕 وجود تعارض شركات بلا حل مُسبَق → نوجّه المشرف لشاشة الاختيار
-        // اليدوي، مع تمرير كل بيانات التوليد الأصلية (Session) كي نُعيد
-        // استدعاء generate() بنفس المعطيات فور اكتمال الحل.
         if ($result->hasSupplierConflicts()) {
             session([
                 'purchase_generation_params' => $request->validated(),
@@ -64,11 +68,6 @@ class PurchaseOrderController extends Controller
             ->with('success', $this->buildSuccessMessage($result));
     }
 
-    /**
-     * 🆕 شاشة وسيطة: تعرض كل الشركات المتعارضة (لها أكثر من مورد مفضِّل)
-     * التي اكتُشفت أثناء آخر محاولة توليد، ولكل شركة Select بموردي هذه
-     * الشركة فقط، ليختار المشرف واحداً لكل شركة قبل إكمال التوليد.
-     */
     public function showResolveConflicts()
     {
         $companies = collect(session('purchase_conflicting_companies', []));
@@ -77,7 +76,7 @@ class PurchaseOrderController extends Controller
             return redirect()->route('purchasing.orders.create');
         }
 
-        $suppliersByCompany = $companies->mapWithKeys(fn (string $company) => [
+        $suppliersByCompany = $companies->mapWithKeys(fn(string $company) => [
             $company => SupplierCompany::suppliersForCompany($company),
         ]);
 
@@ -88,17 +87,13 @@ class PurchaseOrderController extends Controller
 
     public function resolveConflicts(Request $request)
     {
-        $choices = $request->input('supplier_choice', []); // [company_name => supplier_id]
+        $choices = $request->input('supplier_choice', []);
 
         session(['purchase_supplier_overrides' => array_merge(
             session('purchase_supplier_overrides', []),
             array_filter($choices)
         )]);
 
-        // 🎯 نُعيد استدعاء التوليد فعلياً بنفس المعطيات الأصلية + التجاوزات
-        // الجديدة، عبر إعادة توجيه لنفس الفورم مسبوقاً ببياناته المحفوظة —
-        // أبسط وأوضح للمشرف من محاولة استدعاء store() هنا مباشرة بدون
-        // FormRequest صريح.
         $params = session('purchase_generation_params', []);
 
         return redirect()->route('purchasing.orders.create')
@@ -121,11 +116,68 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    public function show(PurchaseOrder $purchaseOrder)
+    public function show(PurchaseOrder $purchaseOrder, \App\Services\Shared\Stock\CentralStockReader $centralStock)
     {
         $purchaseOrder->load(['supplier', 'items.product', 'items.supplierProduct.supplier']);
+        $productIds = $purchaseOrder->items->pluck('product_id')->unique()->values()->all();
 
-        return view('purchasing.order-details', ['order' => $purchaseOrder]);
+        return view('purchasing.order-details', [
+            'order' => $purchaseOrder,
+            // 🆕 (ج.2) "الكمية المتوفرة في الصناعة" = رصيد المستودع المركزي (ملف المصفوفة) — نفس قارئ الكمية المقترحة.
+            'industryStock' => $centralStock->quantitiesFor($productIds),
+            // 🆕 (ج.2) سجل تعديلات الكمية المعتمدة لهذه الفاتورة.
+            'approvalHistory' => \App\Models\AuditLog::query()
+                ->whereIn('action', [\App\Enums\AuditAction::PurchaseItemApprovedQtyChanged, \App\Enums\AuditAction::PurchaseItemRemoved])
+                ->whereContext('purchase_order_id', $purchaseOrder->id)
+                ->with('user:id,name')->latest('id')->get(),
+            // 🆕 (ج.3) شارة "آخر تحديث للبيانات" بلوحة "مناقلات؟".
+            'surplusCycle' => $this->cycleResolver->current(),
+        ]);
+    }
+
+    /**
+     * 🆕 تعديل بنود فاتورة بحالة مسودة قبل اتخاذ قرار الاعتماد/الرفض —
+     * يحفظ الكميات المعدَّلة (approved_qty) ويحذف أي أسطر أُزيلت، بلا
+     * تغيير حالة الفاتورة نفسها (تبقى "مسودة" بعد الحفظ، جاهزة للاعتماد
+     * لاحقاً بضغطة منفصلة).
+     */
+    public function updateItems(UpdatePurchaseOrderItemsRequest $request, PurchaseOrder $purchaseOrder)
+    {
+        try {
+            $this->editingService->updateItems(
+                $purchaseOrder,
+                $request->validated('items'),
+                $request->validated('remove_items', [])
+            );
+        } catch (\RuntimeException $e) {
+            return back()->with('error', $e->getMessage());
+        }
+
+        return back()->with('success', '✅ تم حفظ التعديلات على الفاتورة — راجعها ثم اعتمدها متى كنت جاهزاً.');
+    }
+
+    public function exportExcel(PurchaseOrder $purchaseOrder)
+    {
+        $purchaseOrder->load(['supplier', 'items.product']);
+
+        $fileName = 'فاتورة-شراء-' . $purchaseOrder->id . '-' . $purchaseOrder->supplier->name . '.xlsx';
+
+        return Excel::download(new PurchaseOrderExport($purchaseOrder), $fileName);
+    }
+
+    public function exportAllExcel(Request $request)
+    {
+        $filters = $request->only(['status', 'supplier_id']);
+
+        $suffix = '';
+        if (!empty($filters['status'])) {
+            $suffix .= '-' . PurchaseOrderStatus::from($filters['status'])->label();
+        }
+
+        return Excel::download(
+            new AllPurchaseOrdersExport($filters),
+            'فواتير-الشراء-المقترحة' . $suffix . '-' . now()->format('Y-m-d') . '.xlsx'
+        );
     }
 
     public function approve(ApprovePurchaseOrderRequest $request, PurchaseOrder $purchaseOrder)

@@ -9,7 +9,7 @@ class CostVarianceController extends Controller
 {
     public function index(CostVarianceMonitorService $monitor)
     {
-        return view('purchasing.cost-variance', [
+        return view('purchasing.reports.cost-variance', [
             'variances' => $monitor->detectVariances(),
         ]);
     }

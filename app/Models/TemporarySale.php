@@ -18,6 +18,17 @@ class TemporarySale extends Model
         'product_id',
     ];
 
+    protected function casts(): array
+    {
+        return [
+            // 🆕 quantity أصبحت decimal بقاعدة البيانات (راجع مايجريشن
+            // change_quantity_to_decimal...) — بلا هذا الـ Cast، Eloquent
+            // يُعيد أعمدة decimal كنص خام (string)، لا رقماً قابلاً للجمع
+            // الحسابي المباشر بأي مكان يقرأ $sale->quantity مباشرة.
+            'quantity' => 'decimal:4',
+        ];
+    }
+
     public function scopeForSession(Builder $query, string $sessionId): Builder
     {
         return $query->where('session_id', $sessionId);

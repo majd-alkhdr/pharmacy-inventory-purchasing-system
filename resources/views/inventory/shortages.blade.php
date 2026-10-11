@@ -6,7 +6,7 @@
 @push('styles')
 <style>
     .stat-card {
-        border: 1px solid var(--c-border);
+        border: 1px solid #E4E5EA;
         border-radius: 10px;
         background-color: #fff;
     }
@@ -16,12 +16,6 @@
         background-color: var(--c-primary-soft);
         padding: 10px;
         border-radius: 8px;
-    }
-
-    .filter-bar {
-        background-color: var(--c-bg);
-        border-radius: 10px;
-        border: 1px solid var(--c-border);
     }
 
     .sticky-sidebar {
@@ -39,16 +33,23 @@
         background-color: #fff;
     }
 
-    .brand-badge {
-        background-color: var(--c-bg);
-        color: var(--c-secondary);
-        border: 1px solid var(--c-border);
-    }
-
     .qty-badge {
         background-color: #fef2f2;
-        color: var(--c-danger);
+        color: #dc2626;
         border: 1px solid #fee2e2;
+    }
+
+    /* 🆕 شارة مصدر النقص — لون مختلف لكل مصدر لتمييزهما بسرعة بالجدول */
+    .source-badge-sales {
+        background-color: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #dbeafe;
+    }
+
+    .source-badge-standard-inventory {
+        background-color: #f0fdf4;
+        color: #15803d;
+        border: 1px solid #dcfce7;
     }
 </style>
 @endpush
@@ -91,7 +92,18 @@
                     <option value="" @selected(request('status') === '')>عرض الكل</option>
                 </select>
             </div>
-            <div class="col-md-3">
+            {{-- 🆕 فلتر المصدر --}}
+            <div class="col-md-2">
+                <label class="small text-secondary fw-semibold mb-1" style="font-size: 0.75rem;">مصدر
+                    النقص</label>
+                <select name="source" class="form-select form-select-sm rounded-2"
+                    onchange="document.getElementById('filterForm').submit()">
+                    <option value="" @selected(request('source', '') === '')>كل المصادر</option>
+                    <option value="sales" @selected(request('source') === 'sales')>🛒 نقص مبيعات</option>
+                    <option value="standard_inventory" @selected(request('source') === 'standard_inventory')>📊 نقص مخزون قياسي</option>
+                </select>
+            </div>
+            <div class="col-md-2">
                 <label class="small text-secondary fw-semibold mb-1" style="font-size: 0.75rem;">صيدلية
                     محددة</label>
                 <select name="pharmacy_id" class="form-select form-select-sm rounded-2"
@@ -116,16 +128,19 @@
                 <input type="date" name="date_to" value="{{ request('date_to') }}"
                     class="form-control form-control-sm rounded-2">
             </div>
-            <div class="col-md-3 d-flex gap-1">
+            <div class="col-md-2 d-flex gap-1">
                 <button type="submit" class="btn btn-sm w-50 rounded-2 text-nowrap fw-medium"
-                    style="background-color: var(--c-secondary); border-color: var(--c-secondary); color:#fff;">
+                    style="background-color: #495057; border-color: #495057; color:#fff;">
                     <i class="fa-solid fa-filter fa-xs me-1"></i> تصفية
                 </button>
                 <a href="{{ route('inventory.shortages.dashboard') }}"
                     class="btn btn-outline-secondary btn-sm w-25 rounded-2 text-nowrap">
                     تصفير
                 </a>
-                <a href="{{ route('inventory.shortages.export', request()->only('status', 'pharmacy_id', 'date_from', 'date_to')) }}"
+                {{-- 🩹 أُضيف source هنا — بدونها كان رابط التصدير يفقد فلتر
+                     المصدر الحالي بمجرد الضغط عليه (يُصدِّر كل المصادر
+                     دائماً حتى لو الجدول المعروض مفلتَر لمصدر واحد فقط). --}}
+                <a href="{{ route('inventory.shortages.export', request()->only('status', 'pharmacy_id', 'source', 'date_from', 'date_to')) }}"
                     class="btn btn-success btn-sm w-50 rounded-2 text-nowrap fw-medium">
                     <i class="fa-solid fa-file-excel me-1"></i> إكسيل
                 </a>
@@ -147,6 +162,7 @@
                                 <th>المادة المستهدفة</th>
                                 <th>الشركة</th>
                                 <th class="text-center">الكمية</th>
+                                <th>المصدر</th> {{-- 🆕 --}}
                                 <th>الحالة</th>
                                 <th>ملاحظات وتدقيق</th>
                                 <th class="text-center no-print">الإجراء</th>
@@ -176,6 +192,13 @@
                                     <td class="text-center">
                                         <span class="badge qty-badge px-2.5 py-1 fw-bold fs-6">
                                             {{ $shortage->quantity }}
+                                        </span>
+                                    </td>
+                                    {{-- 🆕 شارة المصدر --}}
+                                    <td>
+                                        <span
+                                            class="badge source-badge-{{ str_replace('_', '-', $shortage->source->value) }} px-2 py-1">
+                                            {{ $shortage->source->label() }}
                                         </span>
                                     </td>
                                     <td>
@@ -222,7 +245,7 @@
                                     </td>
                                 </tr>
                             @empty
-                                <x-empty-state colspan="8" icon="fa-inbox" message="لا توجد سجلات عجز أو نواقص تطابق محددات الفرز حالياً." />
+                                <x-empty-state colspan="9" icon="fa-inbox" message="لا توجد سجلات عجز أو نواقص تطابق محددات الفرز حالياً." />
                             @endforelse
                         </tbody>
                     </table>
@@ -237,14 +260,14 @@
         <div class="col-xl-3 col-lg-4">
             <div class="sticky-sidebar">
                 <div class="card border-0 shadow-sm rounded-2 overflow-hidden"
-                    style="border: 1px solid var(--c-border) !important;">
+                    style="border: 1px solid #E4E5EA !important;">
                     <div class="card-header py-2.5 border-0 d-flex justify-content-between align-items-center"
-                        style="background-color: var(--c-dark-soft);">
+                        style="background-color: #1f2937;">
                         <h6 class="mb-0 fw-bold text-white small">
                             <i class="fa-solid fa-fire text-warning me-1"></i> الأعلى نقصاً (المعلقة)
                         </h6>
                         <span class="badge fw-bold rounded-pill p-1 small"
-                            style="font-size: 0.65rem; background-color: var(--c-secondary); color:#fff;">
+                            style="font-size: 0.65rem; background-color: #495057; color:#fff;">
                             @if(request('pharmacy_id') || request('date_from') || request('date_to'))
                                 مطابق للفلتر
                             @else
