@@ -43,6 +43,7 @@ use App\Services\Inventory\PharmacyMappingRecorder;
 use App\Services\Inventory\SalesMappingService;
 use App\Services\Inventory\ShortageFulfillmentService;
 use App\Services\Inventory\ShortageImportService;
+use App\Services\Shared\Export\SafeExportFilename;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -468,7 +469,7 @@ class InventoryController extends Controller
             default     => '',
         };
 
-        $fileName = 'فاتورة-' . $invoice->id . '-' . $invoice->pharmacy->name . $suffix . '.xlsx';
+        $fileName = SafeExportFilename::sanitize('فاتورة-' . $invoice->id . '-' . $invoice->pharmacy->name . $suffix . '.xlsx');
 
         $this->exportLock->lockOne($invoice); // 🆕 (ب.2) أول تصدير يقفل التعديل
 
@@ -663,7 +664,7 @@ class InventoryController extends Controller
     public function exportReverseTransferExcel($id)
     {
         $transfer = ReverseTransfer::with('pharmacy')->findOrFail($id);
-        $fileName = 'مناقلة-عكسية-' . $transfer->id . '-' . $transfer->pharmacy->name . '.xlsx';
+        $fileName = SafeExportFilename::sanitize('مناقلة-عكسية-' . $transfer->id . '-' . $transfer->pharmacy->name . '.xlsx');
 
         return Excel::download(new ReverseTransferExport($transfer->id), $fileName);
     }
@@ -741,7 +742,7 @@ class InventoryController extends Controller
     public function exportPharmacyTransferExcel($id)
     {
         $transfer = PharmacyTransfer::with(['fromPharmacy', 'toPharmacy'])->findOrFail($id);
-        $fileName = 'مناقلة-مباشرة-' . $transfer->id . '-' . $transfer->fromPharmacy->name . '-الى-' . $transfer->toPharmacy->name . '.xlsx';
+        $fileName = SafeExportFilename::sanitize('مناقلة-مباشرة-' . $transfer->id . '-' . $transfer->fromPharmacy->name . '-الى-' . $transfer->toPharmacy->name . '.xlsx');
 
         return Excel::download(new PharmacyTransferExport($transfer->id), $fileName);
     }

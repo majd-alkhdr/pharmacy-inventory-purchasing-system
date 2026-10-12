@@ -16,6 +16,7 @@ use App\Models\SupplierCompany;
 use App\Services\Purchasing\PurchaseOrderCancellationService;
 use App\Services\Purchasing\PurchaseOrderEditingService;
 use App\Services\Purchasing\PurchaseOrderGenerationService;
+use App\Services\Shared\Export\SafeExportFilename;
 use Illuminate\Http\Request;
 use Maatwebsite\Excel\Facades\Excel;
 
@@ -160,7 +161,7 @@ class PurchaseOrderController extends Controller
     {
         $purchaseOrder->load(['supplier', 'items.product']);
 
-        $fileName = 'فاتورة-شراء-' . $purchaseOrder->id . '-' . $purchaseOrder->supplier->name . '.xlsx';
+        $fileName = SafeExportFilename::sanitize('فاتورة-شراء-' . $purchaseOrder->id . '-' . $purchaseOrder->supplier->name . '.xlsx');
 
         return Excel::download(new PurchaseOrderExport($purchaseOrder), $fileName);
     }

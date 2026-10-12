@@ -14,6 +14,7 @@ use App\Models\TransferReconciliation;
 use App\Models\TransferReconciliationItem;
 use App\Services\Inventory\Import\Exceptions\InvalidImportFileException;
 use App\Services\Inventory\Reconciliation\TransferReconciliationService;
+use App\Services\Shared\Export\SafeExportFilename;
 use App\Services\Shared\ImportHistory\ImportHistoryService;
 use Illuminate\Support\Facades\Storage;
 use Maatwebsite\Excel\Facades\Excel;
@@ -52,7 +53,7 @@ class TransferReconciliationController extends Controller
     {
         $invoice = Invoice::with('pharmacy')->findOrFail($id);
 
-        return Excel::download(new PreparationTemplateExport($invoice->id), "قالب-تحضير-مناقلة-{$invoice->id}-{$invoice->pharmacy->name}.xlsx");
+        return Excel::download(new PreparationTemplateExport($invoice->id), SafeExportFilename::sanitize("قالب-تحضير-مناقلة-{$invoice->id}-{$invoice->pharmacy->name}.xlsx"));
     }
 
     public function upload(UploadPreparationFileRequest $request, int $id)
