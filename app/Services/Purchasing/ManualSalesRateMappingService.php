@@ -21,14 +21,14 @@ class ManualSalesRateMappingService
      * @param array<int,string> $decisions [pending_id => 'new'|product_id|'skip']
      * @return array{resolved:int, created:int}
      */
-    public function resolve(string $sessionId, array $decisions): array
+    public function resolve(string $sessionId, array $decisions, array $barcodes = []): array
     {
         $pendingRows = PendingManualSalesRate::forSession($sessionId)->get()->keyBy('id');
 
         $resolved = 0;
         $created = 0;
 
-        DB::transaction(function () use ($pendingRows, $decisions, &$resolved, &$created) {
+        DB::transaction(function () use ($pendingRows, $decisions, $barcodes, &$resolved, &$created) {
             foreach ($decisions as $pendingId => $choice) {
                 $pending = $pendingRows->get((int) $pendingId);
 
@@ -38,6 +38,7 @@ class ManualSalesRateMappingService
 
                 if ($choice === 'new') {
                     $product = Product::create([
+                        'barcode' => trim((string) ($barcodes[$pendingId] ?? '')),
                         'name'    => $pending->material_name,
                         'company' => $pending->company,
                     ]);

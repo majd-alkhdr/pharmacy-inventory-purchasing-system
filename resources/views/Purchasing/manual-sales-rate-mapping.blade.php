@@ -59,6 +59,18 @@
                                                     checked>
                                                 إنشاء منتج جديد بنفس الاسم والشركة
                                             </label>
+                                            <div id="barcode_wrapper_{{ $row->id }}">
+                                                <input type="text"
+                                                    name="barcodes[{{ $row->id }}]"
+                                                    id="barcode_input_{{ $row->id }}"
+                                                    class="form-control form-control-sm @error("barcodes.{$row->id}") is-invalid @enderror"
+                                                    value="{{ old("barcodes.{$row->id}") }}"
+                                                    placeholder="باركود المادة الجديدة"
+                                                    dir="ltr">
+                                                @error("barcodes.{$row->id}")
+                                                    <div class="invalid-feedback">{{ $message }}</div>
+                                                @enderror
+                                            </div>
                                             <label class="small">
                                                 <input type="radio" name="mode_{{ $row->id }}" value="existing">
                                                 ربط بمنتج موجود
@@ -109,14 +121,19 @@
             const hidden = document.getElementById('decision_' + id);
             const searchWrapper = document.getElementById('search_wrapper_' + id);
             const searchSelect = document.getElementById('product_choice_' + id);
+            const barcodeWrapper = document.getElementById('barcode_wrapper_' + id);
+            const barcodeInput = document.getElementById('barcode_input_' + id);
 
             function sync() {
                 const mode = row.querySelector('input[name="mode_' + id + '"]:checked').value;
                 if (mode === 'new') {
                     searchWrapper.style.display = 'none';
+                    barcodeWrapper.style.display = '';
                     hidden.value = 'new';
                 } else {
                     searchWrapper.style.display = '';
+                    barcodeWrapper.style.display = 'none';
+                    barcodeInput.value = ''; // لا باركود "يتيم" إن بدّل المستخدم رأيه بعد الكتابة
                     hidden.value = $(searchSelect).val() || '';
                 }
             }

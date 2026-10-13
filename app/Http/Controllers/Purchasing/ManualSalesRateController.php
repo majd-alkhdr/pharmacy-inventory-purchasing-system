@@ -90,7 +90,7 @@ class ManualSalesRateController extends Controller
 
     public function saveMapping(SaveManualSalesRateMappingRequest $request)
     {
-        $result = $this->mappingService->resolve($request->sessionId(), $request->decisions());
+        $result = $this->mappingService->resolve($request->sessionId(), $request->decisions(), $request->barcodes());
 
         return redirect()->route('purchasing.manual-sales-rate.form')
             ->with('success', "✅ تمت معالجة {$result['resolved']} صف ({$result['created']} منتج جديد أُنشئ).");
