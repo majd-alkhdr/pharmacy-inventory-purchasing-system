@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\Purchasing;
 
-use App\Models\Product;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Validator;
 
@@ -16,25 +15,30 @@ class SaveManualSalesRateMappingRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'session_id'  => ['required', 'string'],
-            'decisions'   => ['nullable', 'array'], // [pending_id => 'new'|product_id|'skip']
-            'barcodes'    => ['nullable', 'array'], // [pending_id => barcode]
-            'barcodes.*'  => ['nullable', 'string', 'max:255'],
+            'session_id' => ['required', 'string'],
+            'decisions'  => ['nullable', 'array'], // [pending_id => 'new'|'skip'|product_id]
+            'barcodes'   => ['nullable', 'array'], // [pending_id => الباركود المُدخَل يدوياً عند اختيار "مادة جديدة"]
+            'barcodes.*' => ['nullable', 'string', 'max:255'],
         ];
     }
 
     /**
-     * 🎯 products.barcode صار إلزامياً وفريداً (migration add_barcode_as_primary_identifier)
-     * — فكل سطر مختار بـ"مادة جديدة" يجب أن يحمل باركوداً غير فارغ، غير مكرَّر داخل
-     * نفس الطلب، وغير مستخدَم لمادة موجودة؛ نرفضه هنا قبل الوصول لقاعدة البيانات.
+     * تحقق شرطي لا يمكن التعبير عنه بقواعد rules() الساكنة: الباركود
+     * إلزامي فقط للأسطر المختارة بـ "مادة جديدة" (choice === 'new')،
+     * ويجب أن يكون فريداً مقابل قاعدة المنتجات الحالية، وفريداً أيضاً
+     * بين الأسطر المُرسَلة بهذا الطلب نفسه (لمنع تكرار الباركود بين
+     * منتجين جديدين بنفس الدفعة — unique:products,barcode لا يكتشف
+     * هذا التكرار الداخلي لأنه يفحص فقط مقابل الصفوف المحفوظة بالفعل).
      */
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator) {
-            $barcodes = $this->barcodes();
+            $decisions = $this->input('decisions', []);
+            $barcodes  = $this->input('barcodes', []);
+
             $seen = [];
 
-            foreach ($this->decisions() as $pendingId => $choice) {
+            foreach ($decisions as $pendingId => $choice) {
                 if ($choice !== 'new') {
                     continue;
                 }
@@ -44,7 +48,7 @@ class SaveManualSalesRateMappingRequest extends FormRequest
                 if ($barcode === '') {
                     $validator->errors()->add(
                         "barcodes.{$pendingId}",
-                        'الباركود إلزامي لإنشاء مادة جديدة.'
+                        'الباركود مطلوب عند إضافة مادة جديدة.'
                     );
                     continue;
                 }
@@ -52,13 +56,13 @@ class SaveManualSalesRateMappingRequest extends FormRequest
                 if (isset($seen[$barcode])) {
                     $validator->errors()->add(
                         "barcodes.{$pendingId}",
-                        'هذا الباركود مُدخَل لأكثر من سطر بنفس الطلب.'
+                        'هذا الباركود مكرر مع صف آخر بنفس القائمة.'
                     );
                     continue;
                 }
                 $seen[$barcode] = true;
 
-                if (Product::where('barcode', $barcode)->exists()) {
+                if (\App\Models\Product::where('barcode', $barcode)->exists()) {
                     $validator->errors()->add(
                         "barcodes.{$pendingId}",
                         'هذا الباركود مستخدَم بالفعل لمادة موجودة.'
@@ -79,9 +83,9 @@ class SaveManualSalesRateMappingRequest extends FormRequest
     }
 
     /**
-     * [pending_id => باركود مُدخَل يدوياً] — فقط للأسطر المختارة بـ "مادة جديدة"؛
-     * الأسطر الأخرى (skip/ربط بمنتج موجود) تُرسِل قيمة فارغة أو لا تُرسِل شيئاً،
-     * وتُتجاهَل بالخدمة.
+     * [pending_id => باركود مُدخَل يدوياً] — تُستعمل فقط للأسطر المختارة
+     * بـ "مادة جديدة"؛ الأسطر الأخرى (skip/ربط بمنتج موجود) تُرسِل قيمة
+     * فارغة أو لا تُرسِل شيئاً، وتُتجاهَل بالخدمة.
      */
     public function barcodes(): array
     {
