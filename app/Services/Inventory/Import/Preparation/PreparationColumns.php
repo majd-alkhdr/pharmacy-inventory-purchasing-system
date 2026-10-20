@@ -12,22 +12,21 @@ use App\Services\Inventory\Import\Support\ArabicTextNormalizer;
  * 🎯 (ب.3) "فورم" ملف التحضير المتفق عليه — بنفس نمط MaterialMasterColumns بالضبط: صف رؤوس
  * إلزامي بترتيب ثابت ومرادفات مقبولة لكل عمود (تُقارن بعد تطبيع عربي — همزات، تاء مربوطة...).
  *
- *   A: رمز المادة | B: اسم المادة (للقراءة البشرية فقط — لا يُستخدم بالمطابقة) | C: الكمية المحضّرة
+ *   A: اسم المادة | B: الكمية المحضّرة   (أي أعمدة بعدهما تُهمَل)
  *
- * القالب الجاهز (PreparationTemplateExport) يُنزَّل من شاشة المطابقة مملوءاً بمواد الفاتورة
- * وعمود الكمية فارغاً — فيكتب المحضّر الأرقام فقط ولا يخطئ برمز.
+ * المطابقة بالاسم لا بالرمز: البرنامج المحاسبي لا يُصدر رمز المادة بفاتورة المناقلة (راجع
+ * PreparationNameMatcher). القالب الجاهز (PreparationTemplateExport) يُنزَّل من شاشة المطابقة
+ * مملوءاً بأسماء مواد الفاتورة وعمود الكمية فارغاً — فيكتب المحضّر الأرقام فقط.
  */
 final class PreparationColumns
 {
-    public const BARCODE = 0;
-    public const NAME = 1;
-    public const PREPARED_QTY = 2;
+    public const NAME = 0;
+    public const PREPARED_QTY = 1;
 
     /** @var array<int, list<string>> */
     private const EXPECTED = [
-        self::BARCODE => ['رمز المادة', 'الباركود', 'barcode'],
-        self::NAME => ['اسم المادة', 'الاسم', 'name'],
-        self::PREPARED_QTY => ['الكمية المحضرة', 'الكمية المحضّرة', 'الكمية الفعلية', 'prepared quantity', 'prepared_qty'],
+        self::NAME => ['اسم المادة', 'الاسم', 'اسم الصنف', 'المادة', 'name'],
+        self::PREPARED_QTY => ['الكمية المحضرة', 'الكمية المحضّرة', 'الكمية الفعلية', 'الكمية', 'prepared quantity', 'prepared_qty'],
     ];
 
     /** @return list<string> رؤوس القالب كما تُكتب */

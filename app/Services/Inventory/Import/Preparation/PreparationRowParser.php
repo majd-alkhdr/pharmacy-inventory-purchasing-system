@@ -21,7 +21,7 @@ use Generator;
  */
 final class PreparationRowParser
 {
-    public const SKIP_NO_BARCODE = 'صف بلا رمز مادة';
+    public const SKIP_NO_NAME = 'صف بلا اسم مادة';
 
     private const FLOAT_TOLERANCE_DECIMALS = 6;
 
@@ -53,17 +53,18 @@ final class PreparationRowParser
             $rowNumber = (int) $source->key();
             $cells = $source->current();
 
-            $barcode = self::text($cells[PreparationColumns::BARCODE] ?? null);
+            $name = self::text($cells[PreparationColumns::NAME] ?? null);
             $rawQty = $cells[PreparationColumns::PREPARED_QTY] ?? null;
 
-            if ($barcode === '') {
-                if (self::text($rawQty) !== '' || self::text($cells[PreparationColumns::NAME] ?? null) !== '') {
-                    $diagnostics->recordSkippedRow($rowNumber, self::SKIP_NO_BARCODE);
+            if ($name === '') {
+                if (self::text($rawQty) !== '') {
+                    $diagnostics->recordSkippedRow($rowNumber, self::SKIP_NO_NAME);
                 }
                 continue;
             }
 
-            yield $rowNumber => new PreparationRow($rowNumber, $barcode, $this->quantity($rawQty, $rowNumber, $barcode, $diagnostics));
+            // دوال التحذير المشتركة تسمّي الوسيط barcode — نمرّر به اسم المادة (معرّف الصف بهذا الملف).
+            yield $rowNumber => new PreparationRow($rowNumber, $name, $this->quantity($rawQty, $rowNumber, $name, $diagnostics));
         }
     }
 

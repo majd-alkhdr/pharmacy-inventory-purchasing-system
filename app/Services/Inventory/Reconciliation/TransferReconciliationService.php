@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Inventory\Reconciliation;
 
 use App\Enums\AuditAction;
-use App\Enums\ImportFileType;
 use App\Models\DiscrepancyReason;
 use App\Models\FinanceSettlementItem;
 use App\Models\ImportLog;
@@ -16,7 +15,7 @@ use App\Models\TransferReconciliationItem;
 use App\Services\Inventory\Import\Exceptions\InvalidImportFileException;
 use App\Services\Inventory\Import\Preparation\PreparationRowParser;
 use App\Services\Inventory\Import\Support\ImportDiagnostics;
-use App\Services\Inventory\Import\Validation\CrossFileCodeValidator;
+use App\Services\Inventory\Import\Support\MaterialNameKey;
 use App\Services\Shared\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
 
@@ -35,7 +34,7 @@ final class TransferReconciliationService
 {
     public function __construct(
         private readonly PreparationRowParser $parser,
-        private readonly CrossFileCodeValidator $crossFileValidator,
+        private readonly PreparationNameMatcher $nameMatcher,
         private readonly AuditLogger $audit,
     ) {
     }
@@ -46,30 +45,41 @@ final class TransferReconciliationService
     public function reconcile(Invoice $invoice, string $absolutePath, ?ImportLog $log = null): ReconciliationOutcome
     {
         $diagnostics = new ImportDiagnostics();
-        [$preparedByBarcode, $firstRowByBarcode, $rowsInFile] = $this->readPrepared($absolutePath, $diagnostics);
+        [$preparedByKey, $rowsInFile] = $this->readPrepared($absolutePath, $diagnostics);
 
-        $invoiced = InvoiceItem::where('invoice_id', $invoice->id)->with('product:id,barcode')->get()
-            ->groupBy(fn (InvoiceItem $i) => (string) $i->product->barcode)
-            ->map(fn ($items) => ['product_id' => (int) $items->first()->product_id, 'qty' => (int) $items->sum('supplied_qty')]);
-
-        // (أ.4) رمز بالتحضير مجهول للنظام كلياً — تحذير بأرقام صفوفه، ولا يدخل المطابقة.
-        $unknown = $this->crossFileValidator->recordUnknownProducts(
-            array_diff_key($firstRowByBarcode, $invoiced->all()),
-            $diagnostics,
-            ImportFileType::TransferPreparation,
-        );
-        $productIdsByBarcode = DB::table('products')
-            ->whereIn('barcode', array_map('strval', array_diff(array_keys($preparedByBarcode), $unknown, $invoiced->keys()->all())))
-            ->pluck('id', 'barcode');
+        $invoiced = InvoiceItem::where('invoice_id', $invoice->id)->with('product:id,name')->get()->groupBy('product_id');
+        $invoiceProductNames = $invoiced->map(fn ($items) => (string) $items->first()->product->name)->all();
 
         $lines = [];
-        foreach ($invoiced as $barcode => $row) {
-            $lines[$row['product_id']] = ['invoiced' => $row['qty'], 'prepared' => $preparedByBarcode[$barcode] ?? 0];
+        foreach ($invoiced as $productId => $items) {
+            $lines[(int) $productId] = ['invoiced' => (int) $items->sum('supplied_qty'), 'prepared' => 0];
         }
-        foreach ($productIdsByBarcode as $barcode => $productId) {
-            // مادة محضَّرة ليست بالفاتورة (تبديل بالخطأ غالباً) — فرق موجب كامل، وتحذير مرئي.
-            $diagnostics->recordProductNotInDocument($firstRowByBarcode[$barcode] ?? 0, (string) $barcode);
-            $lines[(int) $productId] = ['invoiced' => 0, 'prepared' => $preparedByBarcode[$barcode]];
+
+        foreach ($this->nameMatcher->match($preparedByKey, $invoiceProductNames) as $key => $match) {
+            ['name' => $name, 'row' => $row, 'qty' => $qty] = $preparedByKey[$key];
+
+            switch ($match->kind) {
+                case NameMatchKind::Approximate:
+                    $diagnostics->recordApproximateProductName($row, $name, $invoiceProductNames[$match->productId]);
+                    // no break — تُخصَّص كما التامة، والتحذير يطلب المراجعة.
+                case NameMatchKind::Exact:
+                    // عدة أسماء قد تطابق نفس المادة (تام + تقريبي) — تُجمع.
+                    $lines[$match->productId]['prepared'] += $qty;
+                    break;
+                case NameMatchKind::NotInDocument:
+                    // مادة محضَّرة ليست بالفاتورة (تبديل بالخطأ غالباً) — فرق موجب كامل، وتحذير مرئي.
+                    $diagnostics->recordProductNotInDocument($row, $name);
+                    $lines[$match->productId] ??= ['invoiced' => 0, 'prepared' => 0];
+                    $lines[$match->productId]['prepared'] += $qty;
+                    break;
+                case NameMatchKind::Ambiguous:
+                    // لا تخمين: سطور الفاتورة المعنية تظهر بفرق (محضَّر 0) والتحذير يشرح السبب.
+                    $diagnostics->recordAmbiguousProductName($row, $name);
+                    break;
+                case NameMatchKind::Unknown:
+                    $diagnostics->recordUnknownProductName($row, $name);
+                    break;
+            }
         }
 
         $reconciliation = DB::transaction(function () use ($invoice, $lines, $log): TransferReconciliation {
@@ -163,26 +173,27 @@ final class TransferReconciliationService
     }
 
     /**
-     * يجمع الكميات المحضّرة حسب الرمز (رمز مكرر = مجموع، بتحذير) — Generator أحادي المرور،
-     * فالعدّ والتجميع بنفس الاستهلاك الوحيد.
+     * يجمع الكميات المحضّرة حسب المفتاح المحافظ للاسم (اسم مكرر = مجموع، بتحذير) — Generator
+     * أحادي المرور، فالعدّ والتجميع بنفس الاستهلاك الوحيد. يُحفظ أول اسم وأول صف لكل مفتاح.
      *
-     * @return array{0: array<string, int>, 1: array<string, int>, 2: int}
+     * @return array{0: array<string, array{name: string, row: int, qty: int}>, 1: int}
      */
     private function readPrepared(string $absolutePath, ImportDiagnostics $diagnostics): array
     {
         $prepared = [];
-        $firstRow = [];
         $rows = 0;
 
         foreach ($this->parser->parse($absolutePath, $diagnostics) as $row) {
             $rows++;
-            if (isset($prepared[$row->barcode])) {
-                $diagnostics->recordDuplicateBarcode($row->sourceRow, $row->barcode);
+            $key = MaterialNameKey::key($row->name);
+            if (isset($prepared[$key])) {
+                $diagnostics->recordDuplicateProductName($row->sourceRow, $row->name);
+                $prepared[$key]['qty'] += $row->preparedQty;
+                continue;
             }
-            $prepared[$row->barcode] = ($prepared[$row->barcode] ?? 0) + $row->preparedQty;
-            $firstRow[$row->barcode] ??= $row->sourceRow;
+            $prepared[$key] = ['name' => $row->name, 'row' => $row->sourceRow, 'qty' => $row->preparedQty];
         }
 
-        return [$prepared, $firstRow, $rows];
+        return [$prepared, $rows];
     }
 }

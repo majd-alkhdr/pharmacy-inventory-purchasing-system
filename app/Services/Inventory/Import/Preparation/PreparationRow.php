@@ -9,7 +9,7 @@ final class PreparationRow
 {
     public function __construct(
         public readonly int $sourceRow,
-        public readonly string $barcode,
+        public readonly string $name,
         public readonly int $preparedQty,
     ) {
     }

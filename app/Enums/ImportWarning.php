@@ -30,6 +30,12 @@ enum ImportWarning: string
     case UnknownPharmacyCode = 'unknown_pharmacy_code';
     case ProductNotInDocument = 'product_not_in_document';
 
+    // 🆕 (ب.3) مطابقة ملف التحضير بالاسم — البرنامج المحاسبي لا يُصدر رمز المادة بفاتورة المناقلة.
+    case UnknownProductName = 'unknown_product_name';
+    case AmbiguousProductName = 'ambiguous_product_name';
+    case ApproximateProductName = 'approximate_product_name';
+    case DuplicateProductName = 'duplicate_product_name';
+
     public function label(): string
     {
         return match ($this) {
@@ -37,6 +43,10 @@ enum ImportWarning: string
             self::MissingFromLatestMatrix => 'رمز موجود بملف الأصناف وغير موجود بآخر كشف مستودعات',
             self::UnknownPharmacyCode => 'اسم/رمز صيدلية غير معروف',
             self::ProductNotInDocument => 'مادة محضَّرة غير موجودة بالفاتورة الأصلية',
+            self::UnknownProductName => 'اسم مادة غير معروف (لا يطابق أي مادة)',
+            self::AmbiguousProductName => 'اسم يطابق أكثر من مادة — لم تُخصَّص كميته لأي منها؛ راجعه يدوياً',
+            self::ApproximateProductName => 'مطابقة تقريبية للاسم (فروق همزة/تاء مربوطة/فواصل) — راجعها',
+            self::DuplicateProductName => 'اسم مادة مكرر بملف التحضير (جُمعت كمياته)',
             self::NegativeQuantity   => 'كمية سالبة حُوِّلت إلى صفر',
             self::FractionalQuantity => 'كمية كسرية خُفِّضت لأقرب عدد صحيح',
             self::InvalidQuantity    => 'قيمة غير صالحة بخانة كمية (نص أو خارج المدى) عُدّت صفراً',

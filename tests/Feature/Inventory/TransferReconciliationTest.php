@@ -60,11 +60,11 @@ final class TransferReconciliationTest extends TestCase
     public function test_differences_are_computed_for_invoiced_missing_and_extra_products(): void
     {
         $outcome = $this->reconcileWith([
-            ['رمز المادة', 'اسم المادة', 'الكمية المحضّرة'],
-            ['111', 'بنادول', 7],
-            // 222 غائب عن الملف ⇒ محضَّر 0
-            ['333', 'فيتامين', 2],     // ليس بالفاتورة ⇒ فرق موجب + تحذير
-            ['999', 'مجهول', 1],       // غير معروف للنظام ⇒ تحذير ولا يدخل المطابقة
+            ['اسم المادة', 'الكمية المحضّرة'],
+            ['  بنادول ', 7],
+            // أموكسيل غائب عن الملف ⇒ محضَّر 0
+            ['فيتامين', 2],     // ليس بالفاتورة ⇒ فرق موجب + تحذير
+            ['مجهول', 1],       // غير معروف للنظام ⇒ تحذير ولا يدخل المطابقة
         ]);
 
         $this->assertSame(3, $outcome->reconciliation->items_count);
@@ -73,13 +73,43 @@ final class TransferReconciliationTest extends TestCase
         $this->assertSame(-4, $this->item($this->b)->difference);
         $this->assertSame(2, $this->item($this->c)->difference);
         $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::ProductNotInDocument));
-        $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::UnknownProductCode));
+        $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::UnknownProductName));
+    }
+
+    public function test_approximate_and_duplicate_names_are_allocated_with_visible_warnings(): void
+    {
+        $d = Product::create(['barcode' => '444', 'name' => 'شراب السعلة', 'company' => 'ش']);
+        InvoiceItem::create(['invoice_id' => $this->invoice->id, 'product_id' => $d->id, 'requested_qty' => 5, 'supplied_qty' => 5, 'shortage_qty' => 0]);
+
+        $outcome = $this->reconcileWith([
+            ['اسم المادة', 'الكمية'],
+            ['شراب السعله', 5],   // هاء بدل تاء مربوطة ⇒ تقريبي ضمن الفاتورة
+            ['بنادول', 4],
+            ['بنادول', 6],        // مكرر ⇒ جمع
+        ]);
+
+        $this->assertSame(0, $this->item($d)->difference);
+        $this->assertSame(0, $this->item($this->a)->difference);
+        $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::ApproximateProductName));
+        $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::DuplicateProductName));
+    }
+
+    public function test_a_name_shared_by_two_invoiced_products_is_not_allocated(): void
+    {
+        $twin = Product::create(['barcode' => '555', 'name' => 'بنادول', 'company' => 'شركة أخرى']);
+        InvoiceItem::create(['invoice_id' => $this->invoice->id, 'product_id' => $twin->id, 'requested_qty' => 2, 'supplied_qty' => 2, 'shortage_qty' => 0]);
+
+        $outcome = $this->reconcileWith([['اسم المادة', 'الكمية المحضرة'], ['بنادول', 12], ['أموكسيل', 4]]);
+
+        $this->assertSame(-10, $this->item($this->a)->difference);
+        $this->assertSame(-2, $this->item($twin)->difference);
+        $this->assertSame(1, $outcome->diagnostics->count(ImportWarning::AmbiguousProductName));
     }
 
     public function test_a_wrong_header_is_rejected_before_any_write(): void
     {
         try {
-            $this->reconcileWith([['رمز', 'شيء', 'كمية'], ['111', 'x', 1]]);
+            $this->reconcileWith([['رمز', 'كمية'], ['x', 1]]);
             $this->fail('كان يجب رفض رؤوس غير مطابقة.');
         } catch (InvalidImportFileException) {
         }
@@ -87,9 +117,21 @@ final class TransferReconciliationTest extends TestCase
         $this->assertSame(0, TransferReconciliationItem::count());
     }
 
+    public function test_the_old_three_column_barcode_file_is_rejected_with_a_clear_message(): void
+    {
+        try {
+            $this->reconcileWith([['رمز المادة', 'اسم المادة', 'الكمية المحضّرة'], ['111', 'بنادول', 7]]);
+            $this->fail('كان يجب رفض الملف القديم ذي الرمز.');
+        } catch (InvalidImportFileException $e) {
+            $this->assertStringContainsString('اسم المادة، الكمية المحضّرة', $e->getMessage());
+        }
+
+        $this->assertSame(0, TransferReconciliationItem::count());
+    }
+
     public function test_a_finance_flagged_reason_refers_the_item_and_switching_away_clears_it(): void
     {
-        $this->reconcileWith([['رمز المادة', 'اسم المادة', 'الكمية المحضرة'], ['111', 'بنادول', 7], ['222', 'أموكسيل', 4]]);
+        $this->reconcileWith([['اسم المادة', 'الكمية المحضرة'], ['بنادول', 7], ['أموكسيل', 4]]);
         $service = $this->app->make(TransferReconciliationService::class);
         $phantom = DiscrepancyReason::where('code', 'phantom_stock')->firstOrFail();
         $counting = DiscrepancyReason::where('code', 'counting_error')->firstOrFail();
@@ -105,7 +147,7 @@ final class TransferReconciliationTest extends TestCase
 
     public function test_a_new_reason_flagged_for_finance_works_without_code_changes(): void
     {
-        $this->reconcileWith([['رمز المادة', 'اسم المادة', 'الكمية المحضرة'], ['111', 'بنادول', 7], ['222', 'أموكسيل', 4]]);
+        $this->reconcileWith([['اسم المادة', 'الكمية المحضرة'], ['بنادول', 7], ['أموكسيل', 4]]);
         $newReason = DiscrepancyReason::create(['code' => 'expired_unrecorded', 'label' => 'منتهي الصلاحية غير مسجَّل', 'requires_finance_settlement' => true]);
 
         $this->app->make(TransferReconciliationService::class)->setReason($this->item($this->a), $newReason);
@@ -115,7 +157,7 @@ final class TransferReconciliationTest extends TestCase
 
     public function test_export_takes_only_unexported_items_and_marks_them(): void
     {
-        $this->reconcileWith([['رمز المادة', 'اسم المادة', 'الكمية المحضرة'], ['111', 'بنادول', 7], ['222', 'أموكسيل', 1]]);
+        $this->reconcileWith([['اسم المادة', 'الكمية المحضرة'], ['بنادول', 7], ['أموكسيل', 1]]);
         $service = $this->app->make(TransferReconciliationService::class);
         $phantom = DiscrepancyReason::where('code', 'phantom_stock')->firstOrFail();
         $service->setReason($this->item($this->a), $phantom);

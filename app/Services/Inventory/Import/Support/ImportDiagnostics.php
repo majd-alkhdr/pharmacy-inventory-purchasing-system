@@ -124,6 +124,30 @@ final class ImportDiagnostics
         $this->record(ImportWarning::ProductNotInDocument, ['row' => $row, 'barcode' => $barcode]);
     }
 
+    /** 🆕 (ب.3) اسم بملف التحضير لا يطابق أي مادة بالفاتورة ولا بالكتالوج — لا يدخل المطابقة. */
+    public function recordUnknownProductName(int $row, string $name): void
+    {
+        $this->record(ImportWarning::UnknownProductName, ['row' => $row, 'name' => $name]);
+    }
+
+    /** 🆕 (ب.3) اسم يطابق أكثر من مادة — لا تخمين: لا تُخصَّص كميته لأي منها. */
+    public function recordAmbiguousProductName(int $row, string $name): void
+    {
+        $this->record(ImportWarning::AmbiguousProductName, ['row' => $row, 'name' => $name]);
+    }
+
+    /** 🆕 (ب.3) اسم طابق مادة بالفاتورة بعد تطبيع عربي فقط (ة/ه، همزات، فواصل) — يحتاج مراجعة. */
+    public function recordApproximateProductName(int $row, string $name, string $matchedName): void
+    {
+        $this->record(ImportWarning::ApproximateProductName, ['row' => $row, 'name' => $name, 'matched' => $matchedName]);
+    }
+
+    /** 🆕 (ب.3) نفس الاسم بأكثر من صف بملف التحضير — جُمعت كمياته. */
+    public function recordDuplicateProductName(int $row, string $name): void
+    {
+        $this->record(ImportWarning::DuplicateProductName, ['row' => $row, 'name' => $name]);
+    }
+
     public function count(ImportWarning $warning): int
     {
         return $this->counts[$warning->value] ?? 0;

@@ -21,7 +21,7 @@
         <form method="POST" action="{{ route('inventory.invoice.reconciliation.upload', $invoice->id) }}" enctype="multipart/form-data" class="row g-2 align-items-end">
             @csrf
             <div class="col-md-7">
-                <label class="small fw-bold text-secondary mb-1">ملف التحضير (xlsx / csv): رمز المادة ← اسم المادة ← الكمية المحضّرة</label>
+                <label class="small fw-bold text-secondary mb-1">ملف التحضير (xlsx / csv): اسم المادة ← الكمية المحضّرة</label>
                 <input type="file" name="preparation_file" accept=".xlsx,.csv" required class="form-control form-control-sm @error('preparation_file') is-invalid @enderror">
                 @error('preparation_file')<div class="invalid-feedback">{{ $message }}</div>@enderror
             </div>
