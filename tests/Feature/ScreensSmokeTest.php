@@ -132,7 +132,7 @@ final class ScreensSmokeTest extends TestCase
         $this->getJson(route('purchasing.orders.suppliers-for-company', ['company' => 'شركة أ']))->assertOk()->assertJsonPath('suppliers.0.name', 'مورد');
         $this->get(route('purchasing.orders.show', $this->order->id))->assertOk()
             ->assertSee('الكمية المتوفرة في الصناعة')
-            ->assertSee('مناقلات؟')
+            ->assertSee('<i class="fa-solid fa-store"></i> الفروع', false)
             ->assertDontSee('>بونص<', false);
         $this->get(route('purchasing.orders.export-excel', $this->order->id))->assertOk();
         $this->get(route('purchasing.orders.export-all'))->assertOk();

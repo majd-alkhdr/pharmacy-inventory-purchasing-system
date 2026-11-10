@@ -87,6 +87,114 @@
             font-size: 0.82rem;
             margin-bottom: 16px;
         }
+
+        /* 🆕 (ج.3) لوحة "الفروع" — لون الفائض (--c-surplus) لا يُستعمل إلا للفائض. */
+        .branch-surplus-badge {
+            display: inline-block;
+            margin-top: 4px;
+            padding: 1px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--c-surplus);
+            background: var(--c-surplus-soft);
+            color: var(--c-surplus);
+            font-size: 0.68rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .branch-surplus-badge:hover {
+            background: var(--c-surplus);
+            color: #fff;
+        }
+
+        .branch-chip {
+            display: inline-block;
+            padding: 2px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--c-border);
+            background: var(--c-surface);
+            color: var(--c-text-secondary);
+            font-size: 0.72rem;
+            white-space: nowrap;
+        }
+
+        .branch-chip.branch-surplus-chip {
+            border-color: var(--c-surplus);
+            background: var(--c-surplus-soft);
+            color: var(--c-surplus);
+            font-weight: 600;
+        }
+
+        .branch-stock-scroll {
+            max-height: 320px;
+            overflow-y: auto;
+            border: 1px solid var(--c-border);
+            border-radius: 8px;
+        }
+
+        .branch-stock-scroll thead th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: var(--c-bg);
+        }
+
+        .branch-stock-table td {
+            vertical-align: middle;
+        }
+
+        .branch-surplus-row > td {
+            background: var(--c-surplus-soft) !important;
+        }
+
+        .branch-surplus-row > td:first-child {
+            border-inline-start: 3px solid var(--c-surplus);
+        }
+
+        .branch-surplus-state {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 999px;
+            background: var(--c-surplus);
+            color: #fff;
+            font-size: 0.68rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .branch-reserved-row > td {
+            opacity: .6;
+        }
+
+        .branch-below-state {
+            display: inline-block;
+            padding: 1px 8px;
+            border-radius: 999px;
+            background: var(--c-danger-soft);
+            color: var(--c-danger);
+            font-size: 0.68rem;
+            white-space: nowrap;
+        }
+
+        .branch-divider > td {
+            padding: 2px 8px !important;
+            font-size: 0.68rem;
+            color: var(--c-text-faint);
+            background: var(--c-bg) !important;
+            border-top: 1px solid var(--c-border);
+        }
+
+        .branch-legend-swatch {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            vertical-align: middle;
+            margin-inline-end: 4px;
+        }
+
+        .branch-legend-swatch.is-surplus { background: var(--c-surplus); }
+        .branch-legend-swatch.is-below { background: var(--c-danger-soft); border: 1px solid var(--c-danger); }
     </style>
 @endpush
 
@@ -216,6 +324,12 @@
                                     <td class="text-center">
                                         @php($inIndustry = $industryStock[$item->product_id] ?? null)
                                         <span class="fw-bold {{ $inIndustry > 0 ? 'text-success' : 'text-muted' }}">{{ $inIndustry ?? '—' }}</span>
+                                        {{-- 🆕 (ج.3) إشارة صغيرة واحدة فقط بالجدول الرئيسي — التفصيل كله داخل لوحة "الفروع". --}}
+                                        @php($branchSurplus = $surplusByProduct[$item->product_id] ?? 0)
+                                        @if ($branchSurplus > 0)
+                                            <button type="button" class="branch-surplus-badge d-block mx-auto" onclick="toggleTransfers({{ $item->id }})"
+                                                title="عرض أرصدة الفروع">فائض بالفروع: {{ $branchSurplus }}</button>
+                                        @endif
                                     </td>
                                     <td class="text-center text-secondary">{{ number_format($item->unit_cost, 2) }}</td>
                                     <td class="text-center fw-bold text-dark">
@@ -254,7 +368,7 @@
                                         </button>
                                         {{-- 🆕 (ج.3) --}}
                                         <button type="button" class="why-toggle mt-1" onclick="toggleTransfers({{ $item->id }})">
-                                            <i class="fa-solid fa-right-left"></i> مناقلات؟
+                                            <i class="fa-solid fa-store"></i> الفروع
                                         </button>
                                     </td>
                                     @if ($order->isEditable())
@@ -280,12 +394,16 @@
                                         </div>
                                     </td>
                                 </tr>
-                                {{-- 🆕 (ج.3) لوحة "مناقلات؟": صيدليات لديها فائض من هذه المادة الآن --}}
+                                {{-- 🆕 (ج.3) لوحة "الفروع": رصيد المادة بكل فرع، الفائض أولاً بلون مميّز، والسحب منه (للمسودات) --}}
                                 <tr id="transfer-row-{{ $item->id }}" class="why-panel">
                                     <td colspan="9" class="p-3">
-                                        <div class="d-flex justify-content-between flex-wrap gap-2 mb-2">
-                                            <strong class="small"><i class="fa-solid fa-right-left text-primary me-1"></i> سحب الفائض من صيدلية بدل الشراء</strong>
-                                            <span class="badge px-2 py-1 rounded-2" style="background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-secondary);">
+                                        @unless ($isDraft)
+                                            <div class="small text-muted mb-2"><i class="fa-solid fa-lock fa-xs me-1"></i> الفاتورة غير مسودة — العرض للاطلاع فقط</div>
+                                        @endunless
+                                        <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+                                            <strong class="small me-1"><i class="fa-solid fa-store text-secondary me-1"></i> {{ $item->product->name }} بالفروع</strong>
+                                            <span class="d-flex flex-wrap gap-1" data-summary></span>
+                                            <span class="badge px-2 py-1 rounded-2 ms-auto" style="background: var(--c-bg); border: 1px solid var(--c-border); color: var(--c-secondary);">
                                                 <i class="fa-regular fa-clock me-1"></i> آخر تحديث للبيانات:
                                                 <span data-last-update>{{ $surplusCycle->startedAt?->format('Y-m-d H:i') ?? 'غير معروف' }}</span>
                                             </span>
@@ -313,13 +431,16 @@
             @endif
         </form>
 
-        {{-- 🆕 (ج.3) نموذج التنفيذ خارج نموذج التعديل (لا نماذج متداخلة بـ HTML) — تملؤه لوحة "مناقلات؟" --}}
-        <form method="POST" id="transferExecuteForm" class="d-none"
-            onsubmit="return confirm('تنفيذ مناقلة عكسية من هذه الصيدلية للمستودع وحجز فائضها؟');">
-            @csrf
-            <input type="hidden" name="pharmacy_id">
-            <input type="hidden" name="quantity">
-        </form>
+        {{-- 🆕 (ج.3) نموذج التنفيذ خارج نموذج التعديل (لا نماذج متداخلة بـ HTML) — تملؤه لوحة "الفروع".
+             للمسودات فقط؛ والحارس الحقيقي بالخادم (PurchaseTransferOptionsController::execute). --}}
+        @if ($isDraft)
+            <form method="POST" id="transferExecuteForm" class="d-none"
+                onsubmit="return confirm('تنفيذ مناقلة عكسية من هذه الصيدلية للمستودع وحجز فائضها؟');">
+                @csrf
+                <input type="hidden" name="pharmacy_id">
+                <input type="hidden" name="quantity">
+            </form>
+        @endif
 
         {{-- 🆕 (ج.2) سجل تعديلات الكمية المعتمدة (المقترح ↔ المعتمد) --}}
         @if ($approvalHistory->isNotEmpty())
@@ -439,10 +560,11 @@
             document.getElementById('why-row-' + itemId)?.classList.toggle('is-open');
         }
 
-        // 🆕 (ج.3) لوحة "مناقلات؟": قراءة فقط حتى يضغط المستخدم "تنفيذ". "تجاهل" يغلق اللوحة
-        // بالمتصفح فقط — لا طلب للخادم، فلا حفظ ولا سجل ولا تاريخ.
+        // 🆕 (ج.3) لوحة "الفروع": قراءة فقط حتى يضغط المستخدم "سحب للمستودع" بصف فائض (للمسودات فقط).
+        // كل الفروع تُعرض (لا طيّ ولا إخفاء) — التمييز بالترتيب واللون فقط.
         // الأسماء مصدرها ملفات مرفوعة — تُهرَّب قبل إدراجها بـ innerHTML.
         const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const num = v => v === null || v === undefined ? '—' : esc(v);
 
         async function toggleTransfers(itemId) {
             const row = document.getElementById('transfer-row-' + itemId);
@@ -451,54 +573,103 @@
             if (opening) await loadTransferOptions(itemId);
         }
 
+        // حالة الفرع ← خلية "الحالة" (الوصف من الخادم؛ هنا اللون والرقم فقط).
+        function branchState(b) {
+            switch (b.state) {
+                case 'surplus': return `<span class="branch-surplus-state">${esc(b.state_label)} ${esc(b.available)}</span>`;
+                case 'below': return `<span class="branch-below-state">${esc(b.state_label)} (${esc(b.difference)})</span>`;
+                default: return `<span class="text-muted">${esc(b.state_label)}</span>`;
+            }
+        }
+
+        // صف فرع واحد. السحب فقط من صفوف "فائض" وبفاتورة مسودة؛ غير ذلك "—".
+        function branchRow(b, canExecute) {
+            const rowClass = { surplus: 'branch-surplus-row', surplus_reserved: 'branch-reserved-row' }[b.state] || '';
+            const action = b.state === 'surplus' && canExecute
+                ? `<div class="d-flex gap-1 justify-content-center">
+                       <input type="number" min="1" max="${esc(b.available)}" value="${esc(b.suggested_qty)}" class="form-control form-control-sm text-center" style="width:75px" data-qty>
+                       <button type="button" class="btn btn-outline-secondary btn-sm rounded-2 text-nowrap" data-pull="${esc(b.pharmacy_id)}"><i class="fa-solid fa-arrow-down-long me-1"></i> سحب للمستودع</button>
+                   </div>`
+                : '<span class="text-muted">—</span>';
+
+            return `<tr class="${rowClass}" data-branch="${esc(b.pharmacy_id)}">
+                <td class="fw-bold">${esc(b.name)}</td>
+                <td class="text-center">${num(b.current_stock)}</td>
+                <td class="text-center d-none d-md-table-cell">${num(b.standard)}</td>
+                <td class="text-center d-none d-md-table-cell">${b.difference > 0 ? '+' : ''}${num(b.difference)}</td>
+                <td>${branchState(b)}</td>
+                <td class="text-center">${action}</td>
+            </tr>`;
+        }
+
+        function branchSummary(data) {
+            const s = data.summary;
+            const surplus = s.surplus_available > 0
+                ? `<span class="branch-chip branch-surplus-chip">فائض متاح: ${esc(s.surplus_available)} في ${esc(s.surplus_branches)} ${s.surplus_branches === 1 ? 'فرع' : 'فروع'}</span>`
+                : '<span class="branch-chip">لا فائض متاح الآن</span>';
+
+            return `<span class="branch-chip">الصناعة: ${esc(data.industry_stock)}</span>
+                <span class="branch-chip">مجموع أرصدة الفروع: ${esc(s.branches_stock_sum)}</span>${surplus}`;
+        }
+
         async function loadTransferOptions(itemId) {
             const body = document.getElementById('transfer-body-' + itemId);
+            const panel = document.getElementById('transfer-row-' + itemId);
             body.textContent = 'جاري التحميل...';
-            const data = await (await fetch(body.dataset.optionsUrl, { headers: { 'Accept': 'application/json' } })).json();
-            if (data.last_update) {
-                document.querySelector('#transfer-row-' + itemId + ' [data-last-update]').textContent = data.last_update;
-            }
 
-            if (!data.pharmacies.length) {
-                body.innerHTML = '<span>لا توجد صيدلية لديها فائض متاح من هذه المادة حالياً (بعد احتساب ما التُزم به بهذه الدورة).</span>';
+            let data;
+            try {
+                const response = await fetch(body.dataset.optionsUrl, { headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error(response.status);
+                data = await response.json();
+            } catch (e) {
+                body.textContent = 'تعذّر تحميل بيانات الفروع — أعد المحاولة.';
                 return;
             }
 
-            body.innerHTML = `<table class="table table-sm mb-2"><thead><tr><th></th><th>الصيدلية</th>
-                <th class="text-center">الفائض المتاح الآن</th><th class="text-center">رصيدها / قياسيها</th><th class="text-center">الكمية المقترحة للسحب</th></tr></thead><tbody>`
-                + data.pharmacies.map((p, i) => `<tr>
-                    <td><input type="radio" class="form-check-input" name="transfer_choice_${itemId}" value="${i}" ${i === 0 ? 'checked' : ''}></td>
-                    <td class="fw-bold">${esc(p.name)}</td><td class="text-center">${p.available}</td>
-                    <td class="text-center">${p.current_stock} / ${p.standard}</td>
-                    <td class="text-center"><input type="number" min="1" max="${p.available}" value="${p.suggested_qty}" class="form-control form-control-sm text-center mx-auto" style="width:90px" data-qty="${i}"></td>
-                </tr>`).join('') + `</tbody></table>
-                <div class="p-2 rounded-2 mb-2" style="background: var(--c-bg); border: 1px dashed var(--c-border);" data-preview></div>
-                <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-success btn-sm rounded-2" data-execute><i class="fa-solid fa-check me-1"></i> تنفيذ المناقلة العكسية</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-2" data-ignore>تجاهل</button>
+            if (data.last_update) panel.querySelector('[data-last-update]').textContent = data.last_update;
+            panel.querySelector('[data-summary]').innerHTML = branchSummary(data);
+
+            if (!data.branches.length) {
+                body.innerHTML = '<span>لا توجد بيانات مخزون قياسي أو أرصدة للفروع لهذه المادة.</span>';
+                return;
+            }
+
+            const surplusRows = data.branches.filter(b => b.state === 'surplus');
+            const otherRows = data.branches.filter(b => b.state !== 'surplus');
+            const divider = surplusRows.length && otherRows.length
+                ? '<tr class="branch-divider"><td colspan="6">باقي الفروع</td></tr>' : '';
+
+            body.innerHTML = `<div class="table-responsive branch-stock-scroll">
+                    <table class="table table-sm mb-0 branch-stock-table">
+                        <thead><tr>
+                            <th>الفرع</th><th class="text-center">الرصيد</th>
+                            <th class="text-center d-none d-md-table-cell">القياسي</th><th class="text-center d-none d-md-table-cell">الفرق</th>
+                            <th>الحالة</th><th class="text-center">إجراء</th>
+                        </tr></thead>
+                        <tbody>${surplusRows.map(b => branchRow(b, data.can_execute)).join('')}${divider}${otherRows.map(b => branchRow(b, data.can_execute)).join('')}</tbody>
+                    </table>
+                </div>
+                <div class="mt-2" style="font-size: .7rem;">
+                    <span class="me-3"><span class="branch-legend-swatch is-surplus"></span>فائض متاح</span>
+                    <span><span class="branch-legend-swatch is-below"></span>دون القياسي</span>
                 </div>`;
 
-            const chosen = () => Number(body.querySelector(`input[name="transfer_choice_${itemId}"]:checked`).value);
-            const preview = () => {
-                const p = data.pharmacies[chosen()];
-                const qty = body.querySelector(`[data-qty="${chosen()}"]`).value;
-                body.querySelector('[data-preview]').innerHTML =
-                    `<i class="fa-solid fa-file-invoice me-1"></i> فاتورة مناقلة عكسية: من <strong>${esc(p.name)}</strong> إلى المستودع المركزي — <strong>${esc(qty)}</strong> × ${esc(body.dataset.productName)}`;
-            };
-            body.querySelectorAll('input').forEach(el => el.addEventListener('input', preview));
-            preview();
+            body.querySelectorAll('[data-pull]').forEach(button => button.addEventListener('click', () => {
+                const b = data.branches.find(x => String(x.pharmacy_id) === button.dataset.pull);
+                const qty = Number(button.closest('tr').querySelector('[data-qty]').value);
+                if (!Number.isInteger(qty) || qty < 1 || qty > b.available) {
+                    alert(`الكمية يجب أن تكون عدداً صحيحاً بين 1 و${b.available}.`);
+                    return;
+                }
+                if (!confirm(`سحب ${qty} × ${body.dataset.productName} من ${b.name} إلى المستودع المركزي؟`)) return;
 
-            body.querySelector('[data-ignore]').addEventListener('click', () => {
-                document.getElementById('transfer-row-' + itemId).classList.remove('is-open');
-            });
-            body.querySelector('[data-execute]').addEventListener('click', () => {
-                const p = data.pharmacies[chosen()];
                 const form = document.getElementById('transferExecuteForm');
                 form.action = body.dataset.executeUrl;
-                form.pharmacy_id.value = p.pharmacy_id;
-                form.quantity.value = body.querySelector(`[data-qty="${chosen()}"]`).value;
-                form.requestSubmit();
-            });
+                form.pharmacy_id.value = b.pharmacy_id;
+                form.quantity.value = qty;
+                form.submit(); // submit() لا requestSubmit(): التأكيد أعلاه يكفي، بلا نافذة تأكيد ثانية من onsubmit.
+            }));
         }
 
         function markForRemoval(itemId) {

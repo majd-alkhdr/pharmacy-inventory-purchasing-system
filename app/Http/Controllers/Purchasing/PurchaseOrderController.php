@@ -13,6 +13,7 @@ use App\Http\Requests\Purchasing\UpdatePurchaseOrderItemsRequest;
 use App\Models\PurchaseOrder;
 use App\Models\Supplier;
 use App\Models\SupplierCompany;
+use App\Services\Inventory\Surplus\SurplusEngine;
 use App\Services\Purchasing\PurchaseOrderCancellationService;
 use App\Services\Purchasing\PurchaseOrderEditingService;
 use App\Services\Purchasing\PurchaseOrderGenerationService;
@@ -26,7 +27,6 @@ class PurchaseOrderController extends Controller
         private readonly PurchaseOrderGenerationService $generationService,
         private readonly PurchaseOrderCancellationService $cancellationService,
         private readonly PurchaseOrderEditingService $editingService,
-        private readonly \App\Services\Inventory\Surplus\InventoryCycleResolver $cycleResolver, // 🆕 (ج.3)
     ) {}
 
     public function create()
@@ -117,13 +117,23 @@ class PurchaseOrderController extends Controller
         ]);
     }
 
-    public function show(PurchaseOrder $purchaseOrder, \App\Services\Shared\Stock\CentralStockReader $centralStock)
+    public function show(PurchaseOrder $purchaseOrder, \App\Services\Shared\Stock\CentralStockReader $centralStock, SurplusEngine $surplusEngine)
     {
         $purchaseOrder->load(['supplier', 'items.product', 'items.supplierProduct.supplier']);
-        $productIds = $purchaseOrder->items->pluck('product_id')->unique()->values()->all();
+        $productIds = $purchaseOrder->items->pluck('product_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+
+        // 🆕 (ج.3) لقطة فائض **واحدة** لكل مواد الفاتورة — استعلام فائض ثابت مهما كثرت البنود.
+        $snapshot = $surplusEngine->snapshot($productIds);
+        $surplusByProduct = array_map(
+            fn (array $entries) => array_sum(array_map(fn ($e) => $e->available(), $entries)),
+            $snapshot->availableByProduct(),
+        );
 
         return view('purchasing.order-details', [
             'order' => $purchaseOrder,
+            'isDraft' => $purchaseOrder->status === PurchaseOrderStatus::Draft,
+            // 🆕 (ج.3) شارة "فائض بالفروع" تحت "الكمية بالصناعة": product_id ← مجموع الفائض المتاح.
+            'surplusByProduct' => $surplusByProduct,
             // 🆕 (ج.2) "الكمية المتوفرة في الصناعة" = رصيد المستودع المركزي (ملف المصفوفة) — نفس قارئ الكمية المقترحة.
             'industryStock' => $centralStock->quantitiesFor($productIds),
             // 🆕 (ج.2) سجل تعديلات الكمية المعتمدة لهذه الفاتورة.
@@ -131,8 +141,8 @@ class PurchaseOrderController extends Controller
                 ->whereIn('action', [\App\Enums\AuditAction::PurchaseItemApprovedQtyChanged, \App\Enums\AuditAction::PurchaseItemRemoved])
                 ->whereContext('purchase_order_id', $purchaseOrder->id)
                 ->with('user:id,name')->latest('id')->get(),
-            // 🆕 (ج.3) شارة "آخر تحديث للبيانات" بلوحة "مناقلات؟".
-            'surplusCycle' => $this->cycleResolver->current(),
+            // 🆕 (ج.3) شارة "آخر تحديث للبيانات" بلوحة "الفروع" — من نفس اللقطة (لا استدعاء منفصل).
+            'surplusCycle' => $snapshot->cycle,
         ]);
     }
 

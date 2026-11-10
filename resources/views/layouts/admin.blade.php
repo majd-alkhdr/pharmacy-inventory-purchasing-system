@@ -94,6 +94,9 @@
             --c-success: #22c55e;
             --c-danger: #f04438;
             --c-danger-soft: rgba(240, 68, 56, .12);
+            /* 🆕 (ج.3) لون الفائض بالفروع — لشيء واحد فقط: الفائض (لا أخضر/برتقالي/أحمر). */
+            --c-surplus: #2dd4bf;
+            --c-surplus-soft: rgba(45, 212, 191, .12);
             --c-warning: #f5a623;
             --c-text: #EDEDEF;
             --c-text-secondary: #C7C9D4;
@@ -137,6 +140,8 @@
             --c-success: #16A34A;
             --c-danger: #DC2626;
             --c-danger-soft: rgba(220, 38, 38, .10);
+            --c-surplus: #0d9488;
+            --c-surplus-soft: rgba(13, 148, 136, .10);
             --c-warning: #B45309;
             --c-text: #16171B;
             --c-text-secondary: #4B4D58;
