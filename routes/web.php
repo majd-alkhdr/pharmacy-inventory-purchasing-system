@@ -127,6 +127,7 @@ Route::name('inventory.')->middleware(['auth', 'active'])->group(function () {
         // 🆕 (ب.3) مطابقة الفاتورة مع التحضير الفعلي — خطوة مستقلة بعد التحضير المادي.
         Route::get('/invoice/{id}/reconciliation', [TransferReconciliationController::class, 'show'])->whereNumber('id')->name('invoice.reconciliation');
         Route::get('/invoice/{id}/reconciliation/template', [TransferReconciliationController::class, 'template'])->whereNumber('id')->name('invoice.reconciliation.template');
+        Route::get('/invoice/{id}/reconciliation/export', [TransferReconciliationController::class, 'export'])->whereNumber('id')->name('invoice.reconciliation.export');
         Route::post('/invoice/{id}/reconciliation', [TransferReconciliationController::class, 'upload'])->whereNumber('id')->name('invoice.reconciliation.upload');
         Route::post('/reconciliation-items/{itemId}/reason', [TransferReconciliationController::class, 'setReason'])->whereNumber('itemId')->name('reconciliation-item.reason');
         // 🆕 (ب.3) مواد تحتاج تسوية من المالية — ضمن العمليات فقط (لا دور مالية بالنظام).

@@ -35,15 +35,25 @@
     </div>
 
     @if ($reconciliation)
-        <div class="d-flex justify-content-between flex-wrap gap-2 small text-muted mb-2">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 small text-muted mb-2">
             <span>
                 آخر مطابقة: {{ $reconciliation->created_at->format('Y-m-d H:i') }} — {{ $reconciliation->user?->name ?? '—' }}
                 — {{ $reconciliation->items_count }} مادة، <strong class="text-danger">{{ $reconciliation->mismatched_count }}</strong> بفرق
                 @if ($previousCount > 0) (و{{ $previousCount }} مطابقة سابقة محفوظة) @endif
             </span>
-            @if ($reconciliation->importLog)
-                <a href="{{ route('import-history.show', $reconciliation->import_log_id) }}">تحذيرات الملف بسجل الرفع ←</a>
-            @endif
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                @if ($reconciliation->importLog)
+                    <a href="{{ route('import-history.show', $reconciliation->import_log_id) }}">تحذيرات الملف بسجل الرفع ←</a>
+                @endif
+                @if ($reconciliation->mismatched_count > 0)
+                    <a href="{{ route('inventory.invoice.reconciliation.export', $invoice->id) }}" class="btn btn-outline-success btn-sm rounded-2 text-nowrap">
+                        <i class="fa-solid fa-file-excel me-1"></i> تصدير الفروقات للمستودع ({{ $reconciliation->mismatched_count }})
+                    </a>
+                @endif
+                <a href="{{ route('inventory.invoice.reconciliation.export', [$invoice->id, 'all' => 1]) }}" class="btn btn-outline-secondary btn-sm rounded-2 text-nowrap">
+                    <i class="fa-solid fa-file-excel me-1"></i> تصدير الكل
+                </a>
+            </div>
         </div>
 
         <div class="border rounded-2 overflow-hidden shadow-sm bg-white">

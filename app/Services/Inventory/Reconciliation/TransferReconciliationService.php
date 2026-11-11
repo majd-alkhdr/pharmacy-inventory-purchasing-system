@@ -17,6 +17,7 @@ use App\Services\Inventory\Import\Preparation\PreparationRowParser;
 use App\Services\Inventory\Import\Support\ImportDiagnostics;
 use App\Services\Inventory\Import\Support\MaterialNameKey;
 use App\Services\Shared\Audit\AuditLogger;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -117,6 +118,21 @@ final class TransferReconciliationService
         });
 
         return new ReconciliationOutcome($reconciliation, $rowsInFile, $diagnostics);
+    }
+
+    /**
+     * بنود مطابقة جاهزة للتصدير: الفروقات أولاً (النقص الأكبر أولاً) بنفس ترتيب الشاشة.
+     *
+     * @return Collection<int, TransferReconciliationItem>
+     */
+    public function itemsForExport(TransferReconciliation $reconciliation, bool $onlyMismatched): Collection
+    {
+        return $reconciliation->items()
+            ->with(['product:id,name,barcode,company', 'reason:id,label'])
+            ->when($onlyMismatched, fn ($q) => $q->where('difference', '!=', 0))
+            ->orderByRaw('difference = 0')
+            ->orderBy('difference')
+            ->get();
     }
 
     /**
