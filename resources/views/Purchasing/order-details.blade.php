@@ -263,21 +263,33 @@
             </div>
         @endif
 
+        {{-- 🆕 بحث/فرز/فلترة بالمتصفح. المجاميع والميزانية أعلاه تبقى لكل الفاتورة لا للمفلتر. --}}
+        <x-table-toolbar table="po-items" :filters="array_filter([
+            ['key' => 'priority', 'label' => 'الأولوية', 'options' => [
+                'pharmacy_shortage' => 'نقص فعلي بالصيدليات', 'market_shortage' => 'قنص نواقص سوق', 'target' => 'تارجت',
+                'high_turnover' => 'دوران عالٍ', 'high_priority' => 'أولوية عالية', 'normal' => 'عادي',
+            ]],
+            ['key' => 'stock', 'label' => 'الصناعة والفروع', 'options' => [
+                'in_industry' => 'متوفر بالصناعة', 'no_industry' => 'غير متوفر بالصناعة', 'branch_surplus' => 'له فائض بالفروع',
+            ]],
+            $order->isEditable() ? ['key' => 'edit', 'label' => 'التعديل', 'options' => ['edited' => 'معدَّلة عن المقترح']] : null,
+        ])" />
+
         <form action="{{ route('purchasing.orders.update-items', $order->id) }}" method="POST" id="editItemsForm">
             @csrf
             <div class="border rounded-2 overflow-hidden shadow-sm bg-white mb-3">
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-0 small">
+                    <table class="table table-hover align-middle mb-0 small" data-tt-table="po-items" data-tt-scope="{{ $order->id }}">
                         <thead>
                             <tr>
-                                <th style="width: 22%">المادة</th>
-                                <th class="text-center" style="width: 9%">الكمية المقترحة (من النظام)</th>
-                                <th class="text-center" style="width: 12%">الكمية المعتمَدة</th>
+                                <th style="width: 22%" data-tt-sort="name" data-tt-type="text">المادة</th>
+                                <th class="text-center" style="width: 9%" data-tt-sort="suggested" data-tt-type="num">الكمية المقترحة (من النظام)</th>
+                                <th class="text-center" style="width: 12%" data-tt-sort="approved" data-tt-type="num">الكمية المعتمَدة</th>
                                 {{-- 🆕 (ج.2) يستبدل عمود "بونص" (غير مستخدم بالشركة) — حُذف من الشاشة لا أُخفي --}}
-                                <th class="text-center" style="width: 9%">الكمية المتوفرة في الصناعة</th>
-                                <th class="text-center" style="width: 8%">سعر الوحدة</th>
-                                <th class="text-center" style="width: 9%">الإجمالي</th>
-                                <th style="width: 13%">الأولوية</th>
+                                <th class="text-center" style="width: 9%" data-tt-sort="industry" data-tt-type="num">الكمية المتوفرة في الصناعة</th>
+                                <th class="text-center" style="width: 8%" data-tt-sort="unit_cost" data-tt-type="num">سعر الوحدة</th>
+                                <th class="text-center" style="width: 9%" data-tt-sort="total" data-tt-type="num">الإجمالي</th>
+                                <th style="width: 13%" data-tt-sort="priority" data-tt-type="num">الأولوية</th>
                                 <th class="text-center" style="width: 6%">التبرير</th>
                                 @if ($order->isEditable())
                                     <th class="text-center" style="width: 6%">حذف</th>
@@ -286,7 +298,17 @@
                         </thead>
                         <tbody>
                             @forelse ($order->items as $item)
-                                <tr id="item-row-{{ $item->id }}">
+                                @php($inIndustry = $industryStock[$item->product_id] ?? null)
+                                @php($branchSurplus = $surplusByProduct[$item->product_id] ?? 0)
+                                @php($priorityKey = $item->priorityKey())
+                                <tr id="item-row-{{ $item->id }}" data-tt-row data-tt-id="{{ $item->id }}"
+                                    data-tt-search="{{ $item->product->name }} {{ $item->product->company }} {{ $item->product->barcode }}"
+                                    data-tt-s-name="{{ $item->product->name }}" data-tt-s-suggested="{{ $item->suggested_qty }}"
+                                    data-tt-s-approved="{{ $item->finalQuantity() }}" data-tt-s-industry="{{ $inIndustry }}"
+                                    data-tt-s-unit_cost="{{ $item->unit_cost }}" data-tt-s-total="{{ $item->line_total_cost }}"
+                                    data-tt-s-priority="{{ $item->priorityRank() }}" data-tt-f-priority="{{ $priorityKey }}"
+                                    data-tt-f-stock="{{ $inIndustry > 0 ? 'in_industry' : 'no_industry' }}{{ $branchSurplus > 0 ? ' branch_surplus' : '' }}"
+                                    data-tt-f-edit="{{ $item->finalQuantity() !== (int) $item->suggested_qty ? 'edited' : '' }}">
                                     <td>
                                         <span class="d-block text-dark fw-bold">{{ $item->product->name }}</span>
                                         <span class="text-muted"
@@ -310,6 +332,7 @@
                                             <input type="number" min="0" step="any"
                                                 name="items[{{ $item->id }}][approved_qty]"
                                                 value="{{ $item->finalQuantity() }}"
+                                                data-tt-live="approved" data-tt-edit-base="{{ $item->suggested_qty }}" data-tt-edit-filter="edit"
                                                 class="form-control form-control-sm qty-edit-input">
                                         @else
                                             <span class="fw-bold text-dark">{{ $item->finalQuantity() }}</span>
@@ -322,10 +345,8 @@
                                         @endif
                                     </td>
                                     <td class="text-center">
-                                        @php($inIndustry = $industryStock[$item->product_id] ?? null)
                                         <span class="fw-bold {{ $inIndustry > 0 ? 'text-success' : 'text-muted' }}">{{ $inIndustry ?? '—' }}</span>
                                         {{-- 🆕 (ج.3) إشارة صغيرة واحدة فقط بالجدول الرئيسي — التفصيل كله داخل لوحة "الفروع". --}}
-                                        @php($branchSurplus = $surplusByProduct[$item->product_id] ?? 0)
                                         @if ($branchSurplus > 0)
                                             <button type="button" class="branch-surplus-badge d-block mx-auto" onclick="toggleTransfers({{ $item->id }})"
                                                 title="عرض أرصدة الفروع">فائض بالفروع: {{ $branchSurplus }}</button>
@@ -335,28 +356,35 @@
                                     <td class="text-center fw-bold text-dark">
                                         {{ number_format($item->line_total_cost, 2) }}</td>
                                     <td>
-                                        @if ($item->is_market_shortage)
-                                            <span class="priority-badge" style="background:#fef2f2; color:#b91c1c;">قنص
-                                                نواقص سوق</span>
-                                        @elseif ($item->explanation_factors['is_pharmacy_shortage'] ?? false)
-                                            <span class="priority-badge" style="background:#fef2f2; color:#b91c1c;">
-                                                ⛑️ نقص فعلي بالصيدليات
-                                                ({{ $item->explanation_factors['pending_shortage_qty'] ?? 0 }})
-                                            </span>
-                                        @elseif ($item->is_target_item)
-                                            <span class="priority-badge" style="background:#fffbeb; color:#b45309;">صنف
-                                                تارجت</span>
-                                        @elseif ($item->explanation_factors['is_high_turnover'] ?? false)
-                                            <span class="priority-badge" style="background:#f0fdf4; color:#166534;">دوران
-                                                عالٍ 🚀</span>
-                                        @elseif ($item->priority_rank && $item->priority_rank <= 3)
-                                            <span class="priority-badge"
-                                                style="background:var(--c-primary-soft); color:var(--c-primary-dark);">أولوية
-                                                عالية</span>
-                                        @else
-                                            <span class="priority-badge"
-                                                style="background:var(--c-bg); color:var(--c-secondary); border:1px solid var(--c-border);">عادي</span>
-                                        @endif
+                                        {{-- مصدر واحد للأسبقية: PurchaseOrderItem::priorityKey() (يستعمله الفلتر والفرز أيضاً) --}}
+                                        @switch ($priorityKey)
+                                            @case ('market_shortage')
+                                                <span class="priority-badge" style="background:#fef2f2; color:#b91c1c;">قنص
+                                                    نواقص سوق</span>
+                                                @break
+                                            @case ('pharmacy_shortage')
+                                                <span class="priority-badge" style="background:#fef2f2; color:#b91c1c;">
+                                                    ⛑️ نقص فعلي بالصيدليات
+                                                    ({{ $item->explanation_factors['pending_shortage_qty'] ?? 0 }})
+                                                </span>
+                                                @break
+                                            @case ('target')
+                                                <span class="priority-badge" style="background:#fffbeb; color:#b45309;">صنف
+                                                    تارجت</span>
+                                                @break
+                                            @case ('high_turnover')
+                                                <span class="priority-badge" style="background:#f0fdf4; color:#166534;">دوران
+                                                    عالٍ 🚀</span>
+                                                @break
+                                            @case ('high_priority')
+                                                <span class="priority-badge"
+                                                    style="background:var(--c-primary-soft); color:var(--c-primary-dark);">أولوية
+                                                    عالية</span>
+                                                @break
+                                            @default
+                                                <span class="priority-badge"
+                                                    style="background:var(--c-bg); color:var(--c-secondary); border:1px solid var(--c-border);">عادي</span>
+                                        @endswitch
                                         @if ($item->is_over_budget_exception)
                                             <span class="priority-badge d-block mt-1"
                                                 style="background:#fef2f2; color:#b91c1c;">تجاوز الميزانية (استثناء)</span>
@@ -383,7 +411,7 @@
                                         </td>
                                     @endif
                                 </tr>
-                                <tr id="why-row-{{ $item->id }}" class="why-panel">
+                                <tr id="why-row-{{ $item->id }}" class="why-panel" data-tt-companion-of="{{ $item->id }}">
                                     <td colspan="9" class="p-3">
                                         <div class="d-flex gap-2">
                                             <i class="fa-solid fa-lightbulb text-warning mt-1"></i>
@@ -395,7 +423,7 @@
                                     </td>
                                 </tr>
                                 {{-- 🆕 (ج.3) لوحة "الفروع": رصيد المادة بكل فرع، الفائض أولاً بلون مميّز، والسحب منه (للمسودات) --}}
-                                <tr id="transfer-row-{{ $item->id }}" class="why-panel">
+                                <tr id="transfer-row-{{ $item->id }}" class="why-panel" data-tt-companion-of="{{ $item->id }}">
                                     <td colspan="9" class="p-3">
                                         @unless ($isDraft)
                                             <div class="small text-muted mb-2"><i class="fa-solid fa-lock fa-xs me-1"></i> الفاتورة غير مسودة — العرض للاطلاع فقط</div>

@@ -96,9 +96,10 @@
             </div>
         </div>
 
-        {{-- 🔍 فلترة الأصناف المعروضة --}}
+        {{-- 🔍 فلترة الأصناف المعروضة: "حالة التوفر" بالخادم (ويتبعها تصدير Excel) + بحث/فرز/فلتر بالمتصفح بجانبها --}}
+        <div class="d-flex gap-2 align-items-center flex-wrap mb-4 no-print">
         <form method="GET" action="{{ route('inventory.invoice.show', $invoice->id) }}"
-            class="d-flex gap-2 align-items-center flex-wrap mb-4 no-print">
+            class="d-flex gap-2 align-items-center flex-wrap">
             <select name="availability" class="form-select form-select-sm rounded-2" style="width: auto"
                 onchange="this.form.submit()">
                 <option value="">📋 عرض كل الأصناف</option>
@@ -110,6 +111,12 @@
                     class="btn btn-link btn-sm text-decoration-none text-muted p-0 px-1">إلغاء الفرز</a>
             @endif
         </form>
+        <x-table-toolbar table="invoice-items" class="mb-0" :filters="[
+            ['key' => 'edit', 'label' => 'التعديل', 'options' => [
+                'edited' => 'معدَّلة عن المقترح', 'manual' => 'مضافة يدوياً', 'redistributed' => 'أُعيد توزيعها',
+            ]],
+        ]" />
+        </div>
 
         {{-- 🆕 (ب.2) وضع التعديل قبل التصدير --}}
         @if ($invoice->isEditable())
@@ -132,16 +139,16 @@
         {{-- 📊 جدول عرض مواد المستند --}}
         <div class="border rounded-2 overflow-hidden shadow-sm bg-white mb-4">
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 small">
+                <table class="table table-hover align-middle mb-0 small" data-tt-table="invoice-items" data-tt-scope="{{ $invoice->id }}">
                     <thead>
                         <tr>
                             <th style="width: 5%" class="text-center">#</th>
-                            <th style="width: 40%">اسم المادة الطبية الكامل</th>
-                            <th style="width: 17%">الشركة المصنعة</th>
-                            <th style="width: 12%" class="text-center">الكمية المطلوبة</th>
-                            <th style="width: 10%" class="text-center no-print">مقترح النظام</th>
+                            <th style="width: 40%" data-tt-sort="name" data-tt-type="text">اسم المادة الطبية الكامل</th>
+                            <th style="width: 17%" data-tt-sort="company" data-tt-type="text">الشركة المصنعة</th>
+                            <th style="width: 12%" class="text-center" data-tt-sort="requested" data-tt-type="num">الكمية المطلوبة</th>
+                            <th style="width: 10%" class="text-center no-print" @if ($invoice->isEditable()) data-tt-sort="system" data-tt-type="num" @endif>مقترح النظام</th>
                             <th style="width: 12%"
-                                class="text-center table-success text-success fw-bold text-nowrap">الكمية المشحونة
+                                class="text-center table-success text-success fw-bold text-nowrap" data-tt-sort="supplied" data-tt-type="num">الكمية المشحونة
                             </th>
                             @if ($invoice->isEditable())
                                 <th class="text-center no-print" style="width: 4%">حذف</th>
@@ -150,8 +157,13 @@
                     </thead>
                     <tbody>
                         @forelse ($items as $index => $item)
-                            <tr id="invoice-item-{{ $item->id }}">
-                                <td class="text-center text-muted fw-semibold">{{ $index + 1 }}</td>
+                            <tr id="invoice-item-{{ $item->id }}" data-tt-row data-tt-id="{{ $item->id }}"
+                                data-tt-search="{{ $item->product->name }} {{ $item->product->company }} {{ $item->product->barcode }}"
+                                data-tt-s-name="{{ $item->product->name }}" data-tt-s-company="{{ $item->product->company }}"
+                                data-tt-s-requested="{{ $item->requested_qty }}" data-tt-s-system="{{ $item->systemQuantity() }}"
+                                data-tt-s-supplied="{{ $item->supplied_qty }}"
+                                data-tt-f-edit="{{ implode(' ', array_keys(array_filter(['edited' => $item->wasEdited(), 'manual' => $item->is_manually_added, 'redistributed' => $item->is_redistributed]))) }}">
+                                <td class="text-center text-muted fw-semibold" data-tt-index>{{ $index + 1 }}</td>
                                 <td>
                                     <span class="d-block text-dark fw-bold mb-0.5">{{ $item->product->name }}</span>
                                     @if ($item->shortage_qty > 0)
@@ -183,7 +195,7 @@
                                 <td class="text-center table-success text-success fw-bold fs-6">
                                     @if ($invoice->isEditable())
                                         <input type="number" min="0" step="any" name="items[{{ $item->id }}][supplied_qty]"
-                                            value="{{ old("items.{$item->id}.supplied_qty", $item->supplied_qty) }}"
+                                            value="{{ old("items.{$item->id}.supplied_qty", $item->supplied_qty) }}" data-tt-live="supplied"
                                             class="form-control form-control-sm text-center mx-auto no-print" style="width: 90px;">
                                         <span class="d-none d-print-inline">{{ $item->supplied_qty }}</span>
                                     @else

@@ -96,4 +96,29 @@ class PurchaseOrderItem extends Model
     {
         return $this->cancelled_qty > 0;
     }
+
+    /** 🎯 أولوية البند بالترتيب: الأسبقية لأول شرط يتحقق (نفس ترتيب PRIORITY_KEYS). */
+    public const PRIORITY_KEYS = ['market_shortage', 'pharmacy_shortage', 'target', 'high_turnover', 'high_priority', 'normal'];
+
+    /**
+     * 🎯 مصدر واحد لأولوية البند: تستعمله شارة الأولوية وفلترها وفرزها بشاشة الفاتورة، فلا يبقى شرطان
+     * يمكن أن يختلفا. الأسبقية: قنص نواقص سوق ← نقص فعلي بالصيدليات ← تارجت ← دوران عالٍ ← أولوية عالية ← عادي.
+     */
+    public function priorityKey(): string
+    {
+        return match (true) {
+            (bool) $this->is_market_shortage => 'market_shortage',
+            (bool) ($this->explanation_factors['is_pharmacy_shortage'] ?? false) => 'pharmacy_shortage',
+            (bool) $this->is_target_item => 'target',
+            (bool) ($this->explanation_factors['is_high_turnover'] ?? false) => 'high_turnover',
+            $this->priority_rank && $this->priority_rank <= 3 => 'high_priority',
+            default => 'normal',
+        };
+    }
+
+    /** 1 (الأعلى) .. 6 (عادي) — للفرز. غير عمود priority_rank المخزَّن (ترتيب المحرك). */
+    public function priorityRank(): int
+    {
+        return array_search($this->priorityKey(), self::PRIORITY_KEYS, true) + 1;
+    }
 }

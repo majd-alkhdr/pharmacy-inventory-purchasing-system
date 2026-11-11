@@ -53,24 +53,42 @@
                 <a href="{{ route('inventory.invoice.reconciliation.export', [$invoice->id, 'all' => 1]) }}" class="btn btn-outline-secondary btn-sm rounded-2 text-nowrap">
                     <i class="fa-solid fa-file-excel me-1"></i> تصدير الكل
                 </a>
+                <span class="text-muted" style="font-size: .7rem;">التصدير لا يتأثر بالبحث والفلاتر أدناه</span>
             </div>
         </div>
 
+        <x-table-toolbar table="reconciliation-items" placeholder="بحث بالاسم أو الباركود..." :filters="[
+            ['key' => 'status', 'label' => 'الحالة', 'options' => [
+                'mismatched' => 'بفرق', 'matched' => 'مطابق', 'short' => 'نقص بالتحضير', 'over' => 'زيادة بالتحضير',
+                'not_in_invoice' => 'غير موجودة بالفاتورة',
+            ]],
+            ['key' => 'reason', 'label' => 'السبب', 'options' => [
+                'none' => 'بلا سبب بعد', 'has_reason' => 'له سبب', 'finance' => 'محالة للمالية',
+            ]],
+        ]" />
+
         <div class="border rounded-2 overflow-hidden shadow-sm bg-white">
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 small">
+                {{-- تغيير السبب يعيد تحميل الصفحة: الأداة تستعيد البحث/الفلتر/الفرز وموضع التمرير (data-tt-keep-scroll) --}}
+                <table class="table table-hover align-middle mb-0 small" data-tt-table="reconciliation-items" data-tt-scope="{{ $invoice->id }}" data-tt-keep-scroll>
                     <thead>
                         <tr>
-                            <th>المادة</th>
-                            <th class="text-center">بالفاتورة</th>
-                            <th class="text-center">محضَّر فعلياً</th>
-                            <th class="text-center">الفرق</th>
+                            <th data-tt-sort="name" data-tt-type="text">المادة</th>
+                            <th class="text-center" data-tt-sort="invoiced" data-tt-type="num">بالفاتورة</th>
+                            <th class="text-center" data-tt-sort="prepared" data-tt-type="num">محضَّر فعلياً</th>
+                            <th class="text-center" data-tt-sort="difference" data-tt-type="num">الفرق</th>
                             <th style="width: 32%">سبب الفرق</th>
                         </tr>
                     </thead>
                     <tbody>
                         @forelse ($reconciliation->items as $item)
-                            <tr class="{{ $item->hasDifference() ? '' : 'text-muted' }}">
+                            @php($status = !$item->hasDifference() ? 'matched' : 'mismatched ' . ($item->invoiced_qty === 0 ? 'not_in_invoice ' : '') . ($item->difference < 0 ? 'short' : 'over'))
+                            @php($reason = !$item->hasDifference() ? '' : ($item->discrepancy_reason_id === null ? 'none' : 'has_reason' . ($item->settlement ? ' finance' : '')))
+                            <tr class="{{ $item->hasDifference() ? '' : 'text-muted' }}" data-tt-row data-tt-id="{{ $item->id }}"
+                                data-tt-search="{{ $item->product->name }} {{ $item->product->barcode }}"
+                                data-tt-s-name="{{ $item->product->name }}" data-tt-s-invoiced="{{ $item->invoiced_qty }}"
+                                data-tt-s-prepared="{{ $item->prepared_qty }}" data-tt-s-difference="{{ $item->difference }}"
+                                data-tt-f-status="{{ $status }}" data-tt-f-reason="{{ $reason }}">
                                 <td>
                                     <span class="d-block fw-bold {{ $item->hasDifference() ? 'text-dark' : '' }}">{{ $item->product->name }}</span>
                                     <span style="font-size: .7rem;">{{ $item->product->barcode }}</span>
