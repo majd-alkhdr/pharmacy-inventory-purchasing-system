@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>دواك — فتح التطبيق</title>
+<style>
+  :root { --bg: #f4f6f8; --card: #fff; --text: #1f2937; --muted: #6b7280; --accent: #0f766e; --warn: #b45309; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px;
+         background: var(--bg); color: var(--text); font: 16px/1.7 Tahoma, "Segoe UI", Arial, sans-serif; }
+  .card { width: 100%; max-width: 420px; background: var(--card); border-radius: 14px; padding: 32px 24px;
+          box-shadow: 0 4px 24px rgba(0,0,0,.08); text-align: center; }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  p { margin: 8px 0; color: var(--muted); }
+  .spinner { width: 36px; height: 36px; margin: 16px auto; border: 4px solid #e5e7eb; border-top-color: var(--accent);
+             border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .warn { color: var(--warn); font-weight: bold; }
+  button { margin-top: 12px; padding: 10px 28px; border: 0; border-radius: 8px; background: var(--accent); color: #fff;
+           font: inherit; cursor: pointer; }
+  button:hover { filter: brightness(1.1); }
+  a { color: var(--accent); }
+  [hidden] { display: none !important; }
+  small { display: block; margin-top: 14px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>دواك</h1>
+
+  <section id="loading">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>جارٍ فتح التطبيق…</p>
+  </section>
+
+  <section id="failed" hidden>
+    <p class="warn">التطبيق قيد الإقلاع، أعد المحاولة بعد دقيقة</p>
+    <p>ستُعاد المحاولة تلقائياً كل 10 ثوانٍ.</p>
+    <button type="button" id="retry">إعادة المحاولة</button>
+  </section>
+
+  <noscript><p class="warn">يجب تفعيل JavaScript لفتح التطبيق.</p></noscript>
+  <small id="status" aria-live="polite"></small>
+</main>
+
+<script>
+(function () {
+  // الرابط الحالي للتطبيق يكتبه مشرف النفق (tunnel-supervisor.ps1) بملف url.json بهذا المستودع.
+  var REPO = 'majd-alkhdr/dawak-link';
+  var BRANCH = 'main';
+  var RETRY_MS = 10000;
+  // روابط مقبولة فقط (حماية من توجيه لموقع آخر إن عُبث بالملف). إن صار للتطبيق نطاق ثابت أضفه هنا.
+  var ALLOWED = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/?$/;
+
+  var loading = document.getElementById('loading');
+  var failed = document.getElementById('failed');
+  var status = document.getElementById('status');
+  var timer = null;
+  var busy = false;
+
+  function withTimeout(promise, ms) {
+    return new Promise(function (resolve, reject) {
+      var t = setTimeout(function () { reject(new Error('timeout')); }, ms);
+      promise.then(function (v) { clearTimeout(t); resolve(v); }, function (e) { clearTimeout(t); reject(e); });
+    });
+  }
+
+  function readUrl(response) {
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    return response.json().then(function (data) {
+      var url = data && typeof data.url === 'string' ? data.url.trim() : '';
+      if (!ALLOWED.test(url)) throw new Error('invalid url');
+      return url.replace(/\/$/, '');
+    });
+  }
+
+  // 1) GitHub API (محدّث فوراً بعد كل نشر؛ حد 60 طلباً/ساعة لكل IP بلا توكن)
+  function fromApi() {
+    return withTimeout(fetch('https://api.github.com/repos/' + REPO + '/contents/url.json?ref=' + BRANCH, {
+      headers: { 'Accept': 'application/vnd.github.raw' }, cache: 'no-store'
+    }), 8000).then(readUrl);
+  }
+
+  // 2) raw.githubusercontent.com (بلا حد صارم، لكن قد يتأخر تحديثه حتى ~5 دقائق)
+  function fromRaw() {
+    return withTimeout(fetch('https://raw.githubusercontent.com/' + REPO + '/' + BRANCH + '/url.json?t=' + Date.now(), {
+      cache: 'no-store'
+    }), 8000).then(readUrl);
+  }
+
+  function showFailed(reason) {
+    loading.hidden = true;
+    failed.hidden = false;
+    status.textContent = 'آخر محاولة: ' + new Date().toLocaleTimeString('ar') + (reason ? ' (' + reason + ')' : '');
+    clearTimeout(timer);
+    timer = setTimeout(attempt, RETRY_MS);
+  }
+
+  function attempt() {
+    if (busy) return;
+    busy = true;
+    clearTimeout(timer);
+    failed.hidden = true;
+    loading.hidden = false;
+    status.textContent = '';
+    fromApi().catch(fromRaw).then(function (url) {
+      location.replace(url);
+    }, function (e) {
+      busy = false;
+      showFailed(e && e.message);
+    });
+  }
+
+  document.getElementById('retry').addEventListener('click', attempt);
+  attempt();
+})();
+</script>
+</body>
+</html>
