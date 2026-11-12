@@ -24,10 +24,14 @@ if errorlevel 1 (
 php artisan event:cache || goto :fail
 php artisan view:cache || goto :fail
 
+rem Queue worker: must come AFTER optimize:clear (which wipes the cache, including the restart signal).
+rem The worker finishes its current job, exits, and the DawakQueueWorker supervisor starts it again
+rem within ~5 seconds with the new code and config. Nothing is killed.
+php artisan queue:restart
+if errorlevel 1 echo [deploy] WARNING: queue:restart failed - restart the worker: schtasks /End /TN DawakQueueWorker then schtasks /Run /TN DawakQueueWorker
+
 echo [deploy] OK. Remember: edit .env  ==^>  run deploy.bat again.
-echo [deploy] NOTE: the queue worker (php artisan queue:work) keeps running OLD code until restarted.
-echo          If jobs/imports code changed: stop the worker, then start it again from this folder:
-echo          php artisan queue:work --timeout=600
+echo [deploy] Queue worker restarts by itself (log: C:\dawak-queue\worker.log).
 exit /b 0
 
 :fail

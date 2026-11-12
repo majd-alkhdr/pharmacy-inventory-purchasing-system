@@ -11,7 +11,7 @@
 | `DawakTunnel` | مهمة مجدولة (SYSTEM) تشغّل `tunnel-supervisor.ps1`: نفق Cloudflare السريع إلى 8081 + نشر الرابط | نعم بعد تثبيتها (30 ثانية بعد الإقلاع) | `C:\dawak-tunnel\supervisor.log` |
 | صفحة التوجيه | `https://majd-alkhdr.github.io/dawak-link/` تقرأ `url.json` وتحوّل المستخدم للرابط الحالي | — | — |
 | `mysql` (MariaDB) | خدمة Windows مشتركة مع تطبيقات أخرى | نعم (AUTO_START) | — |
-| عامل الطوابير | `php artisan queue:work --timeout=600` (الاستيرادات) | **لا** — يُشغَّل يدوياً | — |
+| `DawakQueueWorker` | مهمة مجدولة (SYSTEM) تشغّل `queue-worker-supervisor.ps1`: عامل الطوابير (الاستيرادات) `queue:work --timeout=600 --sleep=3 --max-time=3600 --memory=256`، ويُعاد تشغيله تلقائياً عند أي خروج | نعم (60 ثانية بعد الإقلاع، وينتظر MariaDB) | `C:\dawak-queue\worker.log` |
 
 إعدادات ApacheDawak: `C:\dawak-apache\conf\httpd-dawak.conf` (مصدره بالمستودع `ops/windows/apache/httpd-dawak.conf`) و`C:\dawak-apache\php.ini` (نسخة من `C:\xampp\php\php.ini` + `opcache.jit=off`).
 
@@ -24,7 +24,7 @@ ops\windows\deploy.bat
 - يمسح الكاش ثم يبني: `config:cache` و`route:cache` و`event:cache` و`view:cache`.
 - **مهم:** بعد `config:cache` لا يقرأ التطبيق `.env` إطلاقاً. أي تعديل على `.env` لا يسري حتى تعيد تشغيل `deploy.bat`.
 - لا حاجة لإعادة تشغيل `ApacheDawak`: OPcache يلتقط الملفات المعدّلة خلال ثانيتين.
-- إن تغيّر كود الاستيراد/الـJobs: أوقف عامل الطوابير وشغّله من جديد (انظر أدناه).
+- آخر خطوة فيه `php artisan queue:restart` (بعد `optimize:clear` لا قبله): العامل ينهي مهمته الحالية ويخرج، والمشرف يعيده خلال ~5 ثوانٍ بالكود الجديد. لا خطوة يدوية.
 - الرجوع لوضع بلا كاش: `php artisan optimize:clear`.
 
 ## ApacheDawak
@@ -67,20 +67,42 @@ powershell -ExecutionPolicy Bypass -File ops\windows\uninstall-tunnel-task.ps1  
 
 صفحة التوجيه: مصدرها `ops/windows/dawak-link/index.html`، وتُرفع لجذر مستودع `dawak-link` (فرع `main`). عند تعديلها ارفعها من جديد.
 
-## عامل الطوابير (الاستيرادات)
+## عامل الطوابير (الاستيرادات): DawakQueueWorker
+
+لم يعد يُشغَّل يدوياً. المهمة المجدولة `DawakQueueWorker` (حساب SYSTEM، مخفية) تشغّل المشرف `ops\windows\queue-worker-supervisor.ps1`، وهو يشغّل:
+`php "<المشروع>\artisan" queue:work --timeout=600 --sleep=3 --max-time=3600 --memory=256`
+تقرير التنفيذ: `docs/report-queue-worker-task.md`.
 
 ```powershell
-# هل يعمل؟
+schtasks /Query /TN DawakQueueWorker /V /FO LIST       # الحالة (Status: Running) وحساب التشغيل (Run As User: SYSTEM)
+Get-Content C:\dawak-queue\worker.log -Tail 30          # السجل: بدء/خروج العامل + خرجه (RUNNING/DONE لكل مهمة)
+Get-Content C:\dawak-queue\worker.log -Wait             # متابعة حيّة
+# العمال الحاليون (المُدار سطره يحوي مسار artisan الكامل)
 Get-CimInstance Win32_Process -Filter "Name='php.exe'" | Where-Object CommandLine -like '*queue:work*' | Select-Object ProcessId,CommandLine
-# تشغيله (من مجلد المشروع)
-php artisan queue:work --timeout=600
+schtasks /Run /TN DawakQueueWorker                     # تشغيل (إن كانت تعمل لا يحدث شيء: لا عمال مكررون)
+powershell -ExecutionPolicy Bypass -File ops\windows\uninstall-queue-worker-task.ps1 -StopOnly   # إيقاف برشاقة (تبقى مسجّلة وتبدأ مع الإقلاع)
+powershell -ExecutionPolicy Bypass -File ops\windows\uninstall-queue-worker-task.ps1             # إزالة المهمة (برشاقة)
+powershell -ExecutionPolicy Bypass -File ops\windows\install-queue-worker-task.ps1 -StartNow     # تثبيت/تحديث + تسليم رشيق من أي عامل يدوي ثم تشغيل
+php artisan queue:restart                              # إعادة تشغيل العامل بعد مهمته الحالية (deploy.bat يفعلها)
 ```
 
-لا يبدأ تلقائياً بعد إعادة إقلاع الجهاز. بعد كل إقلاع شغّله يدوياً (أو اجعله مهمة مجدولة، انظر التقرير).
+سلوك المشرف:
+- ينتظر حتى يقبل منفذ MariaDB `127.0.0.1:3306` الاتصال (بعد الإقلاع قد تتأخر الخدمة).
+- خروج العامل لأي سبب ⇒ تشغيل جديد بعد 5 ثوانٍ.
+  - `--max-time=3600` يجعله يخرج بهدوء كل ساعة **بين مهمتين** (ذاكرة نظيفة وكود جديد)، و`--memory=256` كذلك عند تجاوز الذاكرة.
+- 5 خروجات متتالية كل منها خلال أقل من 20 ثانية ⇒ سطر `ERROR` وتأخير متزايد 10 ← 20 ← 40 ← 80 ← 120 ثانية (لا حلقة مجنونة). السبب عادة بـ`C:\dawak-queue\worker.err.log` أو `storage\logs\laravel.log`.
+- نسخة واحدة فقط (قفل `Global\DawakQueueWorker`). يوقف فقط عامله (PID بـ`C:\dawak-queue\worker.pid` + سطر أوامره يحوي `queue:work` ومسار `artisan` الكامل)، ولا يلمس أي `php.exe` آخر.
+- `schtasks /End` يقتل المشرف فقط ويترك العامل يكمل مهمته. عند التشغيل التالي ينتظر المشرف انتهاء مهمة ذلك العامل الجارية (حتى 12 دقيقة) ثم يوقفه ويبدأ عاملاً جديداً. **للإيقاف استعمل `-StopOnly` لا `/End`.**
+- ملفات `C:\dawak-queue\`:
+  - `worker.log`: يُدوَّر عند 5MB إلى `worker.log.1`.
+  - `worker.out.log` و`worker.err.log`: خرج العامل الحالي، والسابق باللاحقة `.prev`.
+  - `worker.pid`.
+
+**لا تشغّل `php artisan queue:work` يدوياً بعد الآن.** عاملان معاً على نفس الطابور خطر مع الاستيرادات الطويلة: `retry_after=90` ثانية أقل من `--timeout=600`، فقد يلتقط العامل الثاني مهمة ما زالت تعمل منذ أكثر من 90 ثانية ويعلّمها فاشلة (`tries=1`). المشرف يكتب `WARN other queue:work process(es) running` إن رأى عاملاً يدوياً.
 
 ## بعد إعادة إقلاع الجهاز — قائمة تحقق
 
 1. `Get-Service mysql, ApacheDawak` ⇒ Running.
 2. `schtasks /Query /TN DawakTunnel /V /FO LIST` ⇒ Running، و`supervisor.log` فيه `published`.
 3. افتح `https://majd-alkhdr.github.io/dawak-link/` ⇒ صفحة الدخول.
-4. شغّل عامل الطوابير.
+4. `schtasks /Query /TN DawakQueueWorker /V /FO LIST` ⇒ Running، و`C:\dawak-queue\worker.log` فيه `worker started` بعد وقت الإقلاع. (لم يعد يُشغَّل يدوياً.)
